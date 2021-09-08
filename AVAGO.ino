@@ -2,11 +2,14 @@
   AVAGO ADNS-7550
 
  The circuit:
-  * CS - to digital pin 8  (SS pin) P2.0
-  * SDI - to digital pin 14 (MISO pin USI/USCI) P1.6
-  * SDO - to digital pin 15 (MOSI pin USI/USCI) P1.7
-  * CLK - to digital pin 7 (SCK pin) P1.5
- 
+
+ // Default SPI pinout for MSP430G2553
+// MISO P1.7
+// MOSI P1.6
+// CLK  P1.5
+// set pin 8 as the slave select for the digital pot:
+// CS   P2.0
+
 */
 
 //#define DEBUG 1
@@ -49,16 +52,9 @@
 #define  REG_MBURST       0x42
 #define  REG_POWER_UP_RESET 0x3a
 
-
 // include the SPI library:
 #include <SPI.h>
 
-// Default SPI pinout for MSP430G2553
-// MISO P1.7
-// MOSI P1.6
-// CLK  P1.5
-// set pin 8 as the slave select for the digital pot:
-// CS   P2.0
 const int slaveSelectPin = SS;
 
 // MOTION pin set to trigger IRQ
@@ -69,6 +65,10 @@ const int slaveSelectPin = SS;
 #define QXB P2_2
 #define QYA P2_3
 #define QYB P2_4
+
+// approx 5us instead of 13us
+#define GPIO_OUT_SET_SUB(port, pin) (P##port##OUT |=  (1<<pin))
+#define GPIO_OUT_CLR_SUB(port, pin) (P##port##OUT &= ~(1<<pin))
 
 unsigned int motion = 0;
 unsigned int quad_x, quad_y;
@@ -90,10 +90,6 @@ void setup() {
 
   delayMicroseconds(250);
 
-  digitalWrite(slaveSelectPin,LOW);
-  delayMicroseconds(25);
-  digitalWrite(slaveSelectPin,HIGH);
-  delayMicroseconds(25);
   digitalWrite(slaveSelectPin,LOW);
   delayMicroseconds(25);
   digitalWrite(slaveSelectPin,HIGH);
@@ -180,7 +176,12 @@ const unsigned int quad_state[] = { 0, 1, 3, 2 };
 
 void loop() {
   if(motion) {
+#ifdef GPIO_OUT_SET_SUB
+      GPIO_OUT_SET_SUB(1, 0);
+#else
     digitalWrite(RED_LED, HIGH);
+#endif
+
 #if 0
 //    get_reg(REG_OBSERVATION); // 0x2e
 //    reg_val = get_reg(REG_MOTION); // 0x02
@@ -213,7 +214,12 @@ void loop() {
       delta_y += ((signed int)delta_y_raw - 0x1000);
     }
 
+#ifdef GPIO_OUT_SET_SUB
+    GPIO_OUT_CLR_SUB(1, 0);
+#else
     digitalWrite(RED_LED, LOW);
+#endif
+
     --motion;
 
     change_period = min(750, max(5, 1650 / max(abs(delta_x),abs(delta_y))));
@@ -231,8 +237,19 @@ void loop() {
       ++delta_x;
     }
     quad_x &= 0x03;
+#ifdef GPIO_OUT_SET_SUB
+    if(quad_state[quad_x] & 0x01)
+      GPIO_OUT_SET_SUB(2, 1);
+    else
+      GPIO_OUT_CLR_SUB(2, 1);
+    if(quad_state[quad_x] & 0x02)
+      GPIO_OUT_SET_SUB(2, 2);
+    else
+      GPIO_OUT_CLR_SUB(2, 2);
+#else
     digitalWrite(QXA, (quad_state[quad_x] & 0x01)?HIGH:LOW);
     digitalWrite(QXB, (quad_state[quad_x] & 0x02)?HIGH:LOW);
+#endif
   }
 
   if(delta_y != 0) {
@@ -244,47 +261,82 @@ void loop() {
       ++delta_y;
     }
     quad_y &= 0x03;
+#ifdef GPIO_OUT_SET_SUB
+    if(quad_state[quad_y] & 0x01)
+      GPIO_OUT_SET_SUB(2, 3);
+    else
+      GPIO_OUT_CLR_SUB(2, 3);
+    if(quad_state[quad_y] & 0x02)
+      GPIO_OUT_SET_SUB(2, 4);
+    else
+      GPIO_OUT_CLR_SUB(2, 4);
+#else
     digitalWrite(QYA, (quad_state[quad_y] & 0x01)?HIGH:LOW);
     digitalWrite(QYB, (quad_state[quad_y] & 0x02)?HIGH:LOW);
+#endif
   }
 
 }
 
 void set_reg(int address, int value) {
   // take the SS pin low to select the chip:
+#ifdef GPIO_OUT_SET_SUB
+  GPIO_OUT_CLR_SUB(2, 0);
+#else
   digitalWrite(slaveSelectPin,LOW);
+#endif
   //  send in the address and value via SPI:
   SPI.transfer(0x80 | address);
   SPI.transfer(value);
   // take the SS pin high to de-select the chip:
+#ifdef GPIO_OUT_SET_SUB
+  GPIO_OUT_SET_SUB(2, 0);
+#else
   digitalWrite(slaveSelectPin,HIGH); 
+#endif
 }
 
 int get_reg(int address) {
   unsigned int value = 0xFF;
   // take the SS pin low to select the chip:
+#ifdef GPIO_OUT_SET_SUB
+  GPIO_OUT_CLR_SUB(2, 0);
+#else
   digitalWrite(slaveSelectPin,LOW);
+#endif
   //  send in the address and value via SPI:
   SPI.transfer(address);
   value = SPI.transfer(0xFF);
   // take the SS pin high to de-select the chip:
+#ifdef GPIO_OUT_SET_SUB
+  GPIO_OUT_SET_SUB(2, 0);
+#else
   digitalWrite(slaveSelectPin,HIGH); 
+#endif
   return value;
 }
 
 void get_burst() {
   unsigned int value = 0xFF;
   // take the SS pin low to select the chip:
+#ifdef GPIO_OUT_SET_SUB
+  GPIO_OUT_CLR_SUB(2, 0);
+#else
   digitalWrite(slaveSelectPin,LOW);
+#endif
   //  send in the address and value via SPI:
   SPI.transfer(REG_MBURST);
-  delayMicroseconds(4);
+  delayMicroseconds(3);
   value = SPI.transfer(0xFF); // MOTION 0x02
   delta_x_raw = SPI.transfer(0xFF); // REG_DELTA_X 0x03
   delta_y_raw = SPI.transfer(0xFF); // REG_DELTA_Y 0x04
   delta_xy_raw = SPI.transfer(0xFF); // REG_DELTA_XY_H 0x05
   // take the SS pin high to de-select the chip:
-  digitalWrite(slaveSelectPin,HIGH);
+#ifdef GPIO_OUT_SET_SUB
+  GPIO_OUT_SET_SUB(2, 0);
+#else
+  digitalWrite(slaveSelectPin,HIGH); 
+#endif
 }
 
 void set_motion() {
