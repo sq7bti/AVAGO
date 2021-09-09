@@ -70,11 +70,20 @@ const int slaveSelectPin = SS;
 #define GPIO_OUT_SET_SUB(port, pin) (P##port##OUT |=  (1<<pin))
 #define GPIO_OUT_CLR_SUB(port, pin) (P##port##OUT &= ~(1<<pin))
 
-unsigned int motion = 0;
+#define MHZ 8
+#define SET_CPU_CLOCK(mhz) { DCOCTL = CALDCO_##mhz##MHZ; BCSCTL1 = CALBC1_##mhz##MHZ; };
+
+unsigned int motion = 200, k = 0;
 unsigned int quad_x, quad_y;
 signed delta_x, delta_y;
 
 void setup() {
+
+// set CPU clock 1, 8, 12 or 16 MHz
+//  DCOCTL = CALDCO_8MHZ;
+//  BCSCTL1 = CALBC1_8MHZ;
+  SET_CPU_CLOCK(12);
+
   // set the slaveSelectPin as an output:
   pinMode (slaveSelectPin, OUTPUT);
 
@@ -83,7 +92,7 @@ void setup() {
 
   // initialize SPI:
   SPI.begin(); 
-  SPI.setClockDivider(16); // 1MHz SPI
+  SPI.setClockDivider(MHZ); // 1MHz SPI
 
 //  Serial.begin(9600);
 //  Serial.println("AVAGO SPI demo.");
@@ -107,8 +116,8 @@ void setup() {
   set_reg(REG_POWER_UP_RESET, 0x5a); // (0x80 | 0x3a = 0xba)
 
 /* LASER_3MA LASER_5MA LASER_10MA */
-  set_reg(REG_LASER_CTRL0, LASER_RANGE); // 0x1a
-  set_reg(REG_LASER_CTRL1, ~LASER_RANGE); // 0x1f
+  set_reg(REG_LASER_CTRL0, (0xC0) & LASER_RANGE); // 0x1a
+  set_reg(REG_LASER_CTRL1, (0xC0) & ~LASER_RANGE); // 0x1f
   set_reg(REG_LSRPWR_CFG0, LASER_POWER); // 0x1c
   set_reg(REG_LSRPWR_CFG1, ~LASER_POWER); // 0x1d
 
@@ -124,8 +133,20 @@ void setup() {
   // wait for at least one frame
   delayMicroseconds(250);
   // and check observation register, all bits 0-3 must be set
-  while((get_reg(REG_OBSERVATION) & 0x0F) != 0x0F)
-    delayMicroseconds(500);
+  while((get_reg(REG_OBSERVATION) & 0x0F) != 0x0F) {
+    delayMicroseconds(250);
+    --motion;
+    if(!motion) {
+      motion = 200;
+      if(k) {
+        digitalWrite(RED_LED, HIGH);
+        k = 0;
+      } else {
+        digitalWrite(RED_LED, LOW);
+        k = 1;
+      }
+    }
+  }
 
   get_reg(REG_MOTION);                     // read from registers one time regardless of the motion pin state 0x02
   get_reg(REG_DELTA_X);                    // 0x03
@@ -146,7 +167,9 @@ void setup() {
   delayMicroseconds(10);
   set_reg(0x37, 0xb9);    // 0xb7
 
-  delayMicroseconds(250);
+  delayMicroseconds(100);
+
+  motion = 0;
 
   // set motion pin as interrupt input FALLING
   pinMode(MOTION_PIN, INPUT_PULLUP);
@@ -168,6 +191,7 @@ void setup() {
 
   delta_x = 0;
   delta_y = 0;
+
 }
 
 unsigned int reg_val, change_period;
@@ -222,7 +246,9 @@ void loop() {
 
     --motion;
 
-    change_period = min(750, max(5, 1650 / max(abs(delta_x),abs(delta_y))));
+  // for 16MHz 1650
+  // for 8MHz  800
+    change_period = constrain(100 * MHZ / max(abs(delta_x),abs(delta_y)), 5, 100 * MHZ);
   } else {
     if((delta_x != 0) || (delta_y != 0))
       delayMicroseconds(change_period);
@@ -326,7 +352,7 @@ void get_burst() {
 #endif
   //  send in the address and value via SPI:
   SPI.transfer(REG_MBURST);
-  delayMicroseconds(3);
+  delayMicroseconds(MHZ / 4);
   value = SPI.transfer(0xFF); // MOTION 0x02
   delta_x_raw = SPI.transfer(0xFF); // REG_DELTA_X 0x03
   delta_y_raw = SPI.transfer(0xFF); // REG_DELTA_Y 0x04
