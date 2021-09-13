@@ -10,6 +10,18 @@
 // set pin 8 as the slave select for the digital pot:
 // CS   P2.0
 
+           ______________
+      Vcc  |            | GND
+LED   P1_0 |            | P2_6
+      P1_1 |            | P2_7
+      P1_2 |            | TEST
+IRQ   P1_3 |            | RESET
+      P1_4 |            | P1_7   MISO
+CLK   P1_5 |            | P1_6   MOSI
+CS    P2_0 |            | P2_5
+      P2_1 |            | P2_4
+      P2_2 |____________| P2_3
+     
 */
 
 //#define DEBUG 1
@@ -57,8 +69,13 @@
 
 const int slaveSelectPin = SS;
 
-// MOTION pin set to trigger IRQ
+// MOTION pin set to trigger IRQ P1_3
 #define MOTION_PIN PUSH2
+
+// quadrature inputs
+#define QRA P2_6
+#define QRB P2_7
+#define MMB P1_4
 
 // quadrature outputs
 #define QXA P2_1
@@ -70,12 +87,14 @@ const int slaveSelectPin = SS;
 #define GPIO_OUT_SET_SUB(port, pin) (P##port##OUT |=  (1<<pin))
 #define GPIO_OUT_CLR_SUB(port, pin) (P##port##OUT &= ~(1<<pin))
 
-#define MHZ 8
+#define MHZ 12
 #define SET_CPU_CLOCK(mhz) { DCOCTL = CALDCO_##mhz##MHZ; BCSCTL1 = CALBC1_##mhz##MHZ; };
 
 unsigned int motion = 200, k = 0;
 unsigned int quad_x, quad_y;
 signed delta_x, delta_y;
+
+volatile bool QRA_state, QRB_state;
 
 void setup() {
 
@@ -92,7 +111,7 @@ void setup() {
 
   // initialize SPI:
   SPI.begin(); 
-  SPI.setClockDivider(MHZ); // 1MHz SPI
+  SPI.setClockDivider(MHZ/2); // 1MHz SPI
 
 //  Serial.begin(9600);
 //  Serial.println("AVAGO SPI demo.");
@@ -191,6 +210,25 @@ void setup() {
 
   delta_x = 0;
   delta_y = 0;
+
+  // quadrature input for scroll roll
+  pinMode(QRA, INPUT);
+  pinMode(QRB, INPUT);
+  pinMode(MMB, INPUT); // set it as output only when we need to pull it down
+
+  QRA_state = digitalRead(QRA);
+  if(QRA_state) {
+    attachInterrupt(QRA, QRA_falling, FALLING);
+  } else {
+    attachInterrupt(QRA, QRA_rising, RISING);
+  }
+
+  QRB_state = digitalRead(QRB);
+  if(QRB_state) {
+    attachInterrupt(QRB, QRB_falling, FALLING);
+  } else {
+    attachInterrupt(QRB, QRB_rising, RISING);
+  }
 
 }
 
@@ -367,4 +405,52 @@ void get_burst() {
 
 void set_motion() {
   ++motion;
+}
+
+//             >>> increase
+//         _______     ______
+// QRA  ___|     |_____|    |
+//            _______     ______
+// QRB  ______|     |_____|
+
+volatile signed int scroll_roll = 0;
+
+void QRA_falling() {
+  QRA_state = 0;
+//  if(digitalRead(QRB) == HIGH)
+  if(QRB_state)
+    ++scroll_roll;
+  else
+    --scroll_roll;
+  attachInterrupt(QRA, QRA_rising, RISING);
+}
+
+void QRA_rising() {
+  QRA_state = 1;
+//  if(digitalRead(QRB) == HIGH)
+  if(QRB_state)
+    --scroll_roll;
+  else
+    ++scroll_roll;
+  attachInterrupt(QRA, QRA_falling, FALLING);
+}
+
+void QRB_falling() {
+  QRB_state = 0;
+//  if(digitalRead(QRA) == HIGH)
+  if(QRA_state)
+    ++scroll_roll;
+  else
+    --scroll_roll;
+  attachInterrupt(QRB, QRB_rising, RISING);
+}
+
+void QRB_rising() {
+  QRB_state = 1;
+//  if(digitalRead(QRA) == HIGH)
+  if(QRA_state)
+    --scroll_roll;
+  else
+    ++scroll_roll;
+  attachInterrupt(QRB, QRB_falling, FALLING);
 }
