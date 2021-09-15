@@ -12,15 +12,15 @@
 
            ______________
       Vcc  |            | GND
-LED   P1_0 |            | P2_6
-      P1_1 |            | P2_7
-      P1_2 |            | TEST
+LED0  P1_0 |            | P2_6   QRA
+LED1  P1_1 |            | P2_7   QRB
+LED2  P1_2 |            | TEST
 IRQ   P1_3 |            | RESET
-      P1_4 |            | P1_7   MISO
+MMB   P1_4 |            | P1_7   MISO
 CLK   P1_5 |            | P1_6   MOSI
-CS    P2_0 |            | P2_5
-      P2_1 |            | P2_4
-      P2_2 |____________| P2_3
+CS    P2_0 |            | P2_5   BUTT
+QXA   P2_1 |            | P2_4   QYA
+QXB   P2_2 |____________| P2_3   QYB
      
 */
 
@@ -83,6 +83,13 @@ const int slaveSelectPin = SS;
 #define QYA P2_3
 #define QYB P2_4
 
+//RED_LED
+#define LED0 P1_0
+#define LED1 P1_1
+#define LED2 P1_2
+#define BUTT P2_5
+
+
 // approx 5us instead of 13us
 #define GPIO_OUT_SET_SUB(port, pin) (P##port##OUT |=  (1<<pin))
 #define GPIO_OUT_CLR_SUB(port, pin) (P##port##OUT &= ~(1<<pin))
@@ -107,7 +114,12 @@ void setup() {
   pinMode (slaveSelectPin, OUTPUT);
 
   // configure RED LED for output
-  pinMode(RED_LED, OUTPUT);
+  pinMode(LED0, OUTPUT);
+  pinMode(LED1, OUTPUT);
+  pinMode(LED2, OUTPUT);
+  pinMode(BUTT, INPUT_PULLUP);
+
+  attachInterrupt(BUTT, set_sens_mode, FALLING);
 
   // initialize SPI:
   SPI.begin(); 
@@ -235,6 +247,7 @@ void setup() {
 unsigned int reg_val, change_period;
 unsigned int delta_x_raw, delta_y_raw, delta_xy_raw;
 const unsigned int quad_state[] = { 0, 1, 3, 2 };
+volatile signed int scroll_roll = 0;
 
 void loop() {
   if(motion) {
@@ -290,6 +303,17 @@ void loop() {
   } else {
     if((delta_x != 0) || (delta_y != 0))
       delayMicroseconds(change_period);
+    else {
+      if(scroll_roll != 0) {
+        delta_y += scroll_roll;
+        scroll_roll = 0;
+        ++motion;
+        pinMode(MMB, OUTPUT); // set it as output only when we need to pull it down
+        digitalWrite(MMB, LOW);
+      } else {
+        pinMode(MMB, INPUT); // set it as output only when we need to pull it down
+      }
+    }
   }
 
   if(delta_x != 0) {
@@ -403,6 +427,29 @@ void get_burst() {
 #endif
 }
 
+volatile byte sens_mode = 0;
+
+void set_sens_mode() {
+  switch(++sens_mode) {
+    default:
+      sens_mode = 0;
+      analogWrite(LED0, 255);
+      analogWrite(LED1, 0);
+      analogWrite(LED2, 0);
+      break;
+    case 1:
+      analogWrite(LED0, 0);
+      analogWrite(LED1, 255);
+      analogWrite(LED2, 0);
+      break;
+    case 2:
+      analogWrite(LED0, 0);
+      analogWrite(LED1, 0);
+      analogWrite(LED2, 255);
+      break;
+  }
+}
+
 void set_motion() {
   ++motion;
 }
@@ -412,8 +459,6 @@ void set_motion() {
 // QRA  ___|     |_____|    |
 //            _______     ______
 // QRB  ______|     |_____|
-
-volatile signed int scroll_roll = 0;
 
 void QRA_falling() {
   QRA_state = 0;
