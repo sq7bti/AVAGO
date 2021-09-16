@@ -224,8 +224,8 @@ void setup() {
   delta_y = 0;
 
   // quadrature input for scroll roll
-  pinMode(QRA, INPUT);
-  pinMode(QRB, INPUT);
+  pinMode(QRA, INPUT_PULLUP);
+  pinMode(QRB, INPUT_PULLUP);
   pinMode(MMB, INPUT); // set it as output only when we need to pull it down
 
   QRA_state = digitalRead(QRA);
