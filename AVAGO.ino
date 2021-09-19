@@ -76,6 +76,7 @@ const int slaveSelectPin = SS;
 #define QRA P2_6
 #define QRB P2_7
 #define MMB P1_4
+#define WHEEL_DELAY 5000
 
 // quadrature outputs
 #define QXA P2_1
@@ -101,7 +102,8 @@ unsigned int motion = 200, k = 0;
 unsigned int quad_x, quad_y;
 signed delta_x, delta_y;
 
-volatile bool QRA_state, QRB_state;
+volatile unsigned char SW_state;
+volatile signed int scroll_change = 0;
 
 void setup() {
 
@@ -153,7 +155,7 @@ void setup() {
   set_reg(REG_LSRPWR_CFG1, ~LASER_POWER); // 0x1d
 
 /* CONFIG2_400CPI, CONFIG2_800CPI, CONFIG2_1200CPI, CONFIG2_1600CPI */
-  set_reg(REG_CONFIGURATION2, CONFIG2_1200CPI); //   0x12
+  set_reg(REG_CONFIGURATION2, CONFIG2_400CPI); //   0x12
 
   // wait for at least one frame ?
   delayMicroseconds(250);
@@ -226,28 +228,14 @@ void setup() {
   // quadrature input for scroll roll
   pinMode(QRA, INPUT_PULLUP);
   pinMode(QRB, INPUT_PULLUP);
-  pinMode(MMB, INPUT); // set it as output only when we need to pull it down
+  pinMode(MMB, OUTPUT); // set it as output only when we need to pull it down
 
-  QRA_state = digitalRead(QRA);
-  if(QRA_state) {
-    attachInterrupt(QRA, QRA_falling, FALLING);
-  } else {
-    attachInterrupt(QRA, QRA_rising, RISING);
-  }
-
-  QRB_state = digitalRead(QRB);
-  if(QRB_state) {
-    attachInterrupt(QRB, QRB_falling, FALLING);
-  } else {
-    attachInterrupt(QRB, QRB_rising, RISING);
-  }
-
+  SW_state = (digitalRead(QRA) << 1) + digitalRead(QRB);
 }
 
 unsigned int reg_val, change_period;
 unsigned int delta_x_raw, delta_y_raw, delta_xy_raw;
 const unsigned int quad_state[] = { 0, 1, 3, 2 };
-volatile signed int scroll_roll = 0;
 
 void loop() {
   if(motion) {
@@ -304,14 +292,48 @@ void loop() {
     if((delta_x != 0) || (delta_y != 0))
       delayMicroseconds(change_period);
     else {
-      if(scroll_roll != 0) {
-        delta_y += scroll_roll;
-        scroll_roll = 0;
-        ++motion;
+      SW_state &= 0x3;
+      SW_state <<= 2;
+      SW_state += (digitalRead(QRB) << 1) + digitalRead(QRA);
+
+//             >>> increase
+//         _______     _______
+// QRA  ___|     |_____|     |___
+//            _______     _______
+// QRB  ______|     |_____|
+//       00 01 11 10 00 01 11 10
+
+      switch(SW_state) {
+        // 0001, 0111, 1110, 1000
+        case 0x1:
+        case 0x7:
+        case 0xE:
+        case 0x8:
+          ++scroll_change;
+        break;
+        // 0100, 1101, 1011, 0010
+        case 0x4:
+        case 0xD:
+        case 0xB:
+        case 0x2:
+          --scroll_change;
+        break;
+        default:
+        // 0000, 0101, 1111, 1010 -> no change
+        break;
+      }
+      if(scroll_change != 0) {
+        delta_x += scroll_change;
+        scroll_change = 0;
         pinMode(MMB, OUTPUT); // set it as output only when we need to pull it down
         digitalWrite(MMB, LOW);
+        change_period = WHEEL_DELAY;
+//        delayMicroseconds(WHEEL_DELAY);
       } else {
-        pinMode(MMB, INPUT); // set it as output only when we need to pull it down
+//        delayMicroseconds(WHEEL_DELAY);
+//        digitalWrite(MMB, HIGH);
+        pinMode(MMB, INPUT_PULLUP); // set it as output only when we need to pull it down
+        change_period = WHEEL_DELAY;
       }
     }
   }
@@ -452,50 +474,4 @@ void set_sens_mode() {
 
 void set_motion() {
   ++motion;
-}
-
-//             >>> increase
-//         _______     ______
-// QRA  ___|     |_____|    |
-//            _______     ______
-// QRB  ______|     |_____|
-
-void QRA_falling() {
-  QRA_state = 0;
-//  if(digitalRead(QRB) == HIGH)
-  if(QRB_state)
-    ++scroll_roll;
-  else
-    --scroll_roll;
-  attachInterrupt(QRA, QRA_rising, RISING);
-}
-
-void QRA_rising() {
-  QRA_state = 1;
-//  if(digitalRead(QRB) == HIGH)
-  if(QRB_state)
-    --scroll_roll;
-  else
-    ++scroll_roll;
-  attachInterrupt(QRA, QRA_falling, FALLING);
-}
-
-void QRB_falling() {
-  QRB_state = 0;
-//  if(digitalRead(QRA) == HIGH)
-  if(QRA_state)
-    ++scroll_roll;
-  else
-    --scroll_roll;
-  attachInterrupt(QRB, QRB_rising, RISING);
-}
-
-void QRB_rising() {
-  QRB_state = 1;
-//  if(digitalRead(QRA) == HIGH)
-  if(QRA_state)
-    --scroll_roll;
-  else
-    ++scroll_roll;
-  attachInterrupt(QRB, QRB_falling, FALLING);
 }
