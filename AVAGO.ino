@@ -13,15 +13,44 @@
            ______________
       Vcc  |            | GND
 LED0  P1_0 |            | P2_6   QRA
-LED1  P1_1 |            | P2_7   QRB
-LED2  P1_2 |            | TEST
+LMB   P1_1 |            | P2_7   QRB
+RMB   P1_2 |            | TEST
 IRQ   P1_3 |            | RESET
 MMB   P1_4 |            | P1_7   MISO
 CLK   P1_5 |            | P1_6   MOSI
 CS    P2_0 |            | P2_5   BUTT
 QXA   P2_1 |            | P2_4   QYA
 QXB   P2_2 |____________| P2_3   QYB
-     
+
+mouse pinout:
+     X2  X1  Y1  Y2  MMB
+      U   D   L   R  PotY
+   _______________________
+   \  1   2   3   4   5  /
+    \                   /
+     \__6___7___8___9_ /
+       LMB  +  gnd RMB
+                   PotX
+       
+scroll wheel protocols:
+micomys: 20ms apart on MMB, 600 .. 650 us - six hundred  http://wiki.icomp.de/wiki/Micromys_Protocol
+
+cocolino: 20ms apart on MMB, 64 .. 70 us - sixty eight, 99.7% PWM
+================== CocolinoTest ==================
+FOURTH DOWN - QXA - X2 pin 4
+FIVETH DOWN - QYA - Y1 pin 3
+
+QXA QXB QYA QYB RMB
+  0   0   0   0   0   wheel up
+  1   0   0   0   0   wheel down
+  0   0   0   0   1   FOURTH down
+WiP                   FIVETH down  
+==================
+mm https://github.com/paulroberthill/AmigaPS2Mouse
+26us ... 32us
+WiP
+==================
+
 */
 
 //#define DEBUG 1
@@ -75,7 +104,9 @@ const int slaveSelectPin = SS;
 // quadrature inputs
 #define QRA P2_6
 #define QRB P2_7
+#define LMB P1_1
 #define MMB P1_4
+#define RMB P1_2
 #define WHEEL_DELAY 5000
 
 // quadrature outputs
@@ -86,9 +117,9 @@ const int slaveSelectPin = SS;
 
 //RED_LED
 #define LED0 P1_0
-#define LED1 P1_1
-#define LED2 P1_2
-#define BUTT P2_5
+//#define LED1 P1_1
+//#define LED2 P1_2
+//#define BUTT P2_5
 
 
 // approx 5us instead of 13us
@@ -117,11 +148,11 @@ void setup() {
 
   // configure RED LED for output
   pinMode(LED0, OUTPUT);
-  pinMode(LED1, OUTPUT);
-  pinMode(LED2, OUTPUT);
-  pinMode(BUTT, INPUT_PULLUP);
+//  pinMode(LED1, OUTPUT);
+//  pinMode(LED2, OUTPUT);
+//  pinMode(BUTT, INPUT_PULLUP);
 
-  attachInterrupt(BUTT, set_sens_mode, FALLING);
+//  attachInterrupt(BUTT, set_sens_mode, FALLING);
 
   // initialize SPI:
   SPI.begin(); 
@@ -228,14 +259,27 @@ void setup() {
   // quadrature input for scroll roll
   pinMode(QRA, INPUT_PULLUP);
   pinMode(QRB, INPUT_PULLUP);
-  pinMode(MMB, OUTPUT); // set it as output only when we need to pull it down
+  pinMode(MMB, INPUT_PULLUP); // set it as output only when we need to pull it down
+//  pinMode(MMB, OUTPUT); // set it as output only when we need to pull it down
+
+//  pinMode(LMB, INPUT_PULLUP);
+//  pinMode(RMB, INPUT_PULLUP);
+  pinMode(LMB, OUTPUT);
+  pinMode(RMB, OUTPUT);
+//  P1DIR |= BIT2;
+//  P1SEL &= ~BIT2;
+//  P1SEL2 &= ~BIT2;
 
   SW_state = (digitalRead(QRA) << 1) + digitalRead(QRB);
+
+  attachInterrupt(MMB, mmb_falling, FALLING);
 }
 
 unsigned int reg_val, change_period;
 unsigned int delta_x_raw, delta_y_raw, delta_xy_raw;
 const unsigned int quad_state[] = { 0, 1, 3, 2 };
+
+unsigned char output_sweep = 0;
 
 void loop() {
   if(motion) {
@@ -321,19 +365,6 @@ void loop() {
         default:
         // 0000, 0101, 1111, 1010 -> no change
         break;
-      }
-      if(scroll_change != 0) {
-        delta_x += scroll_change;
-        scroll_change = 0;
-        pinMode(MMB, OUTPUT); // set it as output only when we need to pull it down
-        digitalWrite(MMB, LOW);
-        change_period = WHEEL_DELAY;
-//        delayMicroseconds(WHEEL_DELAY);
-      } else {
-//        delayMicroseconds(WHEEL_DELAY);
-//        digitalWrite(MMB, HIGH);
-        pinMode(MMB, INPUT_PULLUP); // set it as output only when we need to pull it down
-        change_period = WHEEL_DELAY;
       }
     }
   }
@@ -456,22 +487,51 @@ void set_sens_mode() {
     default:
       sens_mode = 0;
       analogWrite(LED0, 255);
-      analogWrite(LED1, 0);
-      analogWrite(LED2, 0);
+//      analogWrite(LED1, 0);
+//      analogWrite(LED2, 0);
       break;
     case 1:
       analogWrite(LED0, 0);
-      analogWrite(LED1, 255);
-      analogWrite(LED2, 0);
+//      analogWrite(LED1, 255);
+//      analogWrite(LED2, 0);
       break;
     case 2:
       analogWrite(LED0, 0);
-      analogWrite(LED1, 0);
-      analogWrite(LED2, 255);
+//      analogWrite(LED1, 0);
+//      analogWrite(LED2, 255);
       break;
   }
 }
 
 void set_motion() {
   ++motion;
+}
+volatile byte quad_raw_out;
+
+void mmb_falling() {
+
+  quad_raw_out = P2OUT;
+  P2OUT &= ~(BIT2 | BIT3 | BIT4);
+
+  if(scroll_change < 0) {
+    P2OUT &= ~(BIT2 | BIT3 | BIT4);
+    P2OUT |= BIT1;
+    // RMB clear
+    P1OUT &= ~BIT2;
+    ++scroll_change;
+  }
+
+  if(scroll_change > 0) {
+    // pull RMB for 20us
+    P2OUT &= ~(BIT1 | BIT2 | BIT3 | BIT4);
+    // RMB clear
+    P1OUT &= ~BIT2;
+    --scroll_change;
+  }
+
+  delayMicroseconds(30);
+
+  pinMode(MMB, INPUT_PULLUP);
+  P1OUT |= BIT1 | BIT2;
+  P2OUT |= quad_raw_out;
 }
