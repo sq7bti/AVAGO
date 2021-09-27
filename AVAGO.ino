@@ -8,22 +8,22 @@
 // MOSI P1.6
 // CLK  P1.5
 // set pin 8 as the slave select for the digital pot:
-// CS   P2.0
+// CS   P1.2
 
-           ______________
-      Vcc  |            | GND
-LED0  P1_0 |            | P2_6   QRA
-LMB   P1_1 |            | P2_7   QRB
-RMB   P1_2 |            | TEST
-IRQ   P1_3 |            | RESET
-MMB   P1_4 |            | P1_7   MISO
-CLK   P1_5 |            | P1_6   MOSI
-CS    P2_0 |            | P2_5   BUTT
-QXA   P2_1 |            | P2_4   QYA
-QXB   P2_2 |____________| P2_3   QYB
+                                 ______________
+                            Vcc  |            | GND
+                  RED_LED   P1_0 |            | P2_6   QRA
+                   MMBUTT   P1_1 |            | P2_7   QRB
+                      CS    P1_2 |            | TEST
+                      IRQ   P1_3 |            | RESET
+        DB9 5         MMB   P1_4 |            | P1_7   MISO
+                      CLK   P1_5 |            | P1_6   MOSI
+        DB9 9         RMB   P2_0 |            | P2_5   LMB         DB9 6
+X2      DB9 4         QXA   P2_1 |            | P2_4   QYA         DB9 3 Y1
+X1      DB9 2         QXB   P2_2 |____________| P2_3   QYB         DB9 1 Y2
 
-mouse pinout:
-     X2  X1  Y1  Y2  MMB
+mouse pinout DB9:
+     Y2  X1  Y1  X2  MMB
       U   D   L   R  PotY
    _______________________
    \  1   2   3   4   5  /
@@ -43,17 +43,29 @@ FIVETH DOWN - QYA - Y1 pin 3
 QXA QXB QYA QYB RMB
   0   0   0   0   0   wheel up
   1   0   0   0   0   wheel down
-  0   0   0   0   1   FOURTH down
-WiP                   FIVETH down  
+  0   1   1   1   1   FOURTH down
+  1   1   1   0   1   FIVETH up  
+
 ==================
 mm https://github.com/paulroberthill/AmigaPS2Mouse
 26us ... 32us
 WiP
 ==================
+EZ Mouse
+
+Wheel up    right
+Wheel down  left
+
+QXA QXB QYA QYB RMB
+  0   1   0   0   0   wheel up
+  0   0   0   1   0   wheel down
 
 */
 
 //#define DEBUG 1
+
+// wheel protocol used (use appropriate driver on host)
+#define COCOLINO
 
 #define  REG_PRODUCT_ID   0x00
 #define  REG_INV_PRODUCT_ID   0x3E
@@ -96,17 +108,17 @@ WiP
 // include the SPI library:
 #include <SPI.h>
 
-const int slaveSelectPin = SS;
+#define NCS P1_2
 
 // MOTION pin set to trigger IRQ P1_3
-#define MOTION_PIN PUSH2
+#define MOTION_PIN P1_1
 
 // quadrature inputs
 #define QRA P2_6
 #define QRB P2_7
-#define LMB P1_1
+#define LMB P2_5
 #define MMB P1_4
-#define RMB P1_2
+#define RMB P2_0
 #define WHEEL_DELAY 5000
 
 // quadrature outputs
@@ -116,11 +128,8 @@ const int slaveSelectPin = SS;
 #define QYB P2_4
 
 //RED_LED
-#define LED0 P1_0
-//#define LED1 P1_1
-//#define LED2 P1_2
-//#define BUTT P2_5
-
+#define RED_LED P1_0
+#define MMBUTT PUSH2
 
 // approx 5us instead of 13us
 #define GPIO_OUT_SET_SUB(port, pin) (P##port##OUT |=  (1<<pin))
@@ -143,29 +152,22 @@ void setup() {
 //  BCSCTL1 = CALBC1_8MHZ;
   SET_CPU_CLOCK(12);
 
-  // set the slaveSelectPin as an output:
-  pinMode (slaveSelectPin, OUTPUT);
+  // set the NCS as an output:
+  pinMode(NCS, OUTPUT);
 
   // configure RED LED for output
-  pinMode(LED0, OUTPUT);
-//  pinMode(LED1, OUTPUT);
-//  pinMode(LED2, OUTPUT);
+  pinMode(RED_LED, OUTPUT);
 //  pinMode(BUTT, INPUT_PULLUP);
-
-//  attachInterrupt(BUTT, set_sens_mode, FALLING);
 
   // initialize SPI:
   SPI.begin(); 
   SPI.setClockDivider(MHZ/2); // 1MHz SPI
 
-//  Serial.begin(9600);
-//  Serial.println("AVAGO SPI demo.");
-
   delayMicroseconds(250);
 
-  digitalWrite(slaveSelectPin,LOW);
+  digitalWrite(NCS,LOW);
   delayMicroseconds(25);
-  digitalWrite(slaveSelectPin,HIGH);
+  digitalWrite(NCS,HIGH);
   delayMicroseconds(25);
 
 #if DEBUG
@@ -260,15 +262,10 @@ void setup() {
   pinMode(QRA, INPUT_PULLUP);
   pinMode(QRB, INPUT_PULLUP);
   pinMode(MMB, INPUT_PULLUP); // set it as output only when we need to pull it down
-//  pinMode(MMB, OUTPUT); // set it as output only when we need to pull it down
 
-//  pinMode(LMB, INPUT_PULLUP);
-//  pinMode(RMB, INPUT_PULLUP);
-  pinMode(LMB, OUTPUT);
-  pinMode(RMB, OUTPUT);
-//  P1DIR |= BIT2;
-//  P1SEL &= ~BIT2;
-//  P1SEL2 &= ~BIT2;
+  pinMode(MMBUTT, INPUT_PULLUP); // input from left mouse button switch
+  pinMode(LMB, OUTPUT); // connected via diodes to corresponding pins in DB9
+  pinMode(RMB, OUTPUT); // connected via diodes to corresponding pins in DB9
 
   SW_state = (digitalRead(QRA) << 1) + digitalRead(QRB);
 
@@ -422,18 +419,18 @@ void loop() {
 void set_reg(int address, int value) {
   // take the SS pin low to select the chip:
 #ifdef GPIO_OUT_SET_SUB
-  GPIO_OUT_CLR_SUB(2, 0);
+  GPIO_OUT_CLR_SUB(1, 2);
 #else
-  digitalWrite(slaveSelectPin,LOW);
+  digitalWrite(NCS,LOW);
 #endif
   //  send in the address and value via SPI:
   SPI.transfer(0x80 | address);
   SPI.transfer(value);
   // take the SS pin high to de-select the chip:
 #ifdef GPIO_OUT_SET_SUB
-  GPIO_OUT_SET_SUB(2, 0);
+  GPIO_OUT_SET_SUB(1, 2);
 #else
-  digitalWrite(slaveSelectPin,HIGH); 
+  digitalWrite(NCS,HIGH); 
 #endif
 }
 
@@ -441,18 +438,18 @@ int get_reg(int address) {
   unsigned int value = 0xFF;
   // take the SS pin low to select the chip:
 #ifdef GPIO_OUT_SET_SUB
-  GPIO_OUT_CLR_SUB(2, 0);
+  GPIO_OUT_CLR_SUB(1, 2);
 #else
-  digitalWrite(slaveSelectPin,LOW);
+  digitalWrite(NCS,LOW);
 #endif
   //  send in the address and value via SPI:
   SPI.transfer(address);
   value = SPI.transfer(0xFF);
   // take the SS pin high to de-select the chip:
 #ifdef GPIO_OUT_SET_SUB
-  GPIO_OUT_SET_SUB(2, 0);
+  GPIO_OUT_SET_SUB(1, 2);
 #else
-  digitalWrite(slaveSelectPin,HIGH); 
+  digitalWrite(NCS,HIGH); 
 #endif
   return value;
 }
@@ -461,9 +458,9 @@ void get_burst() {
   unsigned int value = 0xFF;
   // take the SS pin low to select the chip:
 #ifdef GPIO_OUT_SET_SUB
-  GPIO_OUT_CLR_SUB(2, 0);
+  GPIO_OUT_CLR_SUB(1, 2);
 #else
-  digitalWrite(slaveSelectPin,LOW);
+  digitalWrite(NCS,LOW);
 #endif
   //  send in the address and value via SPI:
   SPI.transfer(REG_MBURST);
@@ -474,64 +471,79 @@ void get_burst() {
   delta_xy_raw = SPI.transfer(0xFF); // REG_DELTA_XY_H 0x05
   // take the SS pin high to de-select the chip:
 #ifdef GPIO_OUT_SET_SUB
-  GPIO_OUT_SET_SUB(2, 0);
+  GPIO_OUT_SET_SUB(1, 2);
 #else
-  digitalWrite(slaveSelectPin,HIGH); 
+  digitalWrite(NCS,HIGH); 
 #endif
-}
-
-volatile byte sens_mode = 0;
-
-void set_sens_mode() {
-  switch(++sens_mode) {
-    default:
-      sens_mode = 0;
-      analogWrite(LED0, 255);
-//      analogWrite(LED1, 0);
-//      analogWrite(LED2, 0);
-      break;
-    case 1:
-      analogWrite(LED0, 0);
-//      analogWrite(LED1, 255);
-//      analogWrite(LED2, 0);
-      break;
-    case 2:
-      analogWrite(LED0, 0);
-//      analogWrite(LED1, 0);
-//      analogWrite(LED2, 255);
-      break;
-  }
 }
 
 void set_motion() {
   ++motion;
 }
-volatile byte quad_raw_out;
+volatile byte quad_raw_out, test, button_state;
+
+//P2_0 RMB
+//P2_1 QXA
+//P2_2 QXB
+//P2_3 QYA
+//P2_4 QYB
+//P2_5 LMB
 
 void mmb_falling() {
 
   quad_raw_out = P2OUT;
-  P2OUT &= ~(BIT2 | BIT3 | BIT4);
 
-  if(scroll_change < 0) {
-    P2OUT &= ~(BIT2 | BIT3 | BIT4);
-    P2OUT |= BIT1;
-    // RMB clear
-    P1OUT &= ~BIT2;
-    ++scroll_change;
+  if(scroll_change != 0) {
+#ifdef COCOLINO
+    if(scroll_change < 0) {
+      P2OUT = BIT1; //QXA
+      ++scroll_change;
+    } else {
+      P2OUT = 0; // RMB
+      --scroll_change;
+    }
+#else // EZMOUSE
+    //         RMB clear
+    if(scroll_change < 0) {
+      P2OUT = BIT1; // QXA
+      ++scroll_change;
+    } else  {
+      P2OUT = BIT4; // QYB
+      --scroll_change;
+    }
+#endif
+  } else {
+    P2OUT = BIT0; // RMB
+    --test;
+    if(!test) {
+      test = 255;
+      button_state ^= 0x01;
+    }
   }
 
-  if(scroll_change > 0) {
-    // pull RMB for 20us
-    P2OUT &= ~(BIT1 | BIT2 | BIT3 | BIT4);
-    // RMB clear
-    P1OUT &= ~BIT2;
-    --scroll_change;
+  // middle button state MMBUTT
+  if(P1IN & BIT3) {
+    P2OUT |= BIT5; // MMB
   }
 
-  delayMicroseconds(30);
+#ifdef COCOLINO
 
-  pinMode(MMB, INPUT_PULLUP);
-  P1OUT |= BIT1 | BIT2;
-  P2OUT |= quad_raw_out;
+  // 4th QXA
+//  if(button_state_4th)
+//    P2OUT |= BIT1; // 4th
+
+  // 5th QYB
+//  if(button_state_5th)
+//    P2OUT |= BIT4; // 5th
+
+  // 25 (32us) ... 33 (44us) 
+//  delayMicroseconds(33);
+  while(!(P1IN & BIT4));
+#else // EZMOUSE
+  delayMicroseconds(20);
+//  while(!(P1IN & BIT4));
+#endif
+
+//  pinMode(MMB, INPUT_PULLUP);
+  P2OUT = quad_raw_out;
 }
