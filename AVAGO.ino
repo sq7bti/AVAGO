@@ -13,9 +13,9 @@
                                  ______________
                             Vcc  |            | GND
                   RED_LED   P1_0 |            | P2_6   QRA
-                   MMBUTT   P1_1 |            | P2_7   QRB
+               MOTION/IRQ   P1_1 |            | P2_7   QRB
                       CS    P1_2 |            | TEST
-                      IRQ   P1_3 |            | RESET
+                            P1_3 |            | RESET
         DB9 5         MMB   P1_4 |            | P1_7   MISO
                       CLK   P1_5 |            | P1_6   MOSI
         DB9 9         RMB   P2_0 |            | P2_5   LMB         DB9 6
@@ -110,7 +110,7 @@ QXA QXB QYA QYB RMB
 
 #define NCS P1_2
 
-// MOTION pin set to trigger IRQ P1_3
+// MOTION pin set to trigger IRQ P1_1
 #define MOTION_PIN P1_1
 
 // quadrature inputs
@@ -144,51 +144,47 @@ signed delta_x, delta_y;
 
 volatile unsigned char SW_state;
 volatile signed int scroll_change = 0;
+volatile byte mmb_trigger;
 
 void setup() {
-
-// set CPU clock 1, 8, 12 or 16 MHz
-//  DCOCTL = CALDCO_8MHZ;
-//  BCSCTL1 = CALBC1_8MHZ;
-  SET_CPU_CLOCK(12);
 
   // set the NCS as an output:
   pinMode(NCS, OUTPUT);
 
   // configure RED LED for output
   pinMode(RED_LED, OUTPUT);
-//  pinMode(BUTT, INPUT_PULLUP);
+  pinMode(MOTION_PIN, INPUT_PULLUP);
 
   // initialize SPI:
   SPI.begin(); 
-  SPI.setClockDivider(MHZ/2); // 1MHz SPI
+  SPI.setClockDivider(MHZ); // 2MHz SPI
 
   delayMicroseconds(250);
 
   digitalWrite(NCS,LOW);
-  delayMicroseconds(25);
+  delayMicroseconds(50);
   digitalWrite(NCS,HIGH);
-  delayMicroseconds(25);
+  delayMicroseconds(50);
 
-#if DEBUG
+//#if DEBUG
   get_reg(REG_PRODUCT_ID); // 0x00 -> 0x32
   get_reg(REG_INV_PRODUCT_ID); // 0x3e -> 0xfc
   get_reg(REG_REVISION_ID); // 0x01 -> 0x03
   get_reg(REG_INV_REVISION_ID); // 0x3f -> 0xcd
-#endif // DEBUG
+//#endif // DEBUG
 
 //  delayMicroseconds(250);
 
   set_reg(REG_POWER_UP_RESET, 0x5a); // (0x80 | 0x3a = 0xba)
 
 /* LASER_3MA LASER_5MA LASER_10MA */
-  set_reg(REG_LASER_CTRL0, (0xC0) & LASER_RANGE); // 0x1a
-  set_reg(REG_LASER_CTRL1, (0xC0) & ~LASER_RANGE); // 0x1f
-  set_reg(REG_LSRPWR_CFG0, LASER_POWER); // 0x1c
-  set_reg(REG_LSRPWR_CFG1, ~LASER_POWER); // 0x1d
+  set_reg(REG_LASER_CTRL0, (0xC0) & LASER_RANGE); // 0x1a (0x9a)
+  set_reg(REG_LASER_CTRL1, (0xC0) & ~LASER_RANGE); // 0x1f (0x9f)
+  set_reg(REG_LSRPWR_CFG0, LASER_POWER); // 0x1c (0x9c)
+  set_reg(REG_LSRPWR_CFG1, ~LASER_POWER); // 0x1d (0x9d)
 
 /* CONFIG2_400CPI, CONFIG2_800CPI, CONFIG2_1200CPI, CONFIG2_1600CPI */
-  set_reg(REG_CONFIGURATION2, CONFIG2_400CPI); //   0x12
+  set_reg(REG_CONFIGURATION2, CONFIG2_400CPI); //   0x12 (0x92)
 
   // wait for at least one frame ?
   delayMicroseconds(250);
@@ -200,7 +196,7 @@ void setup() {
   delayMicroseconds(250);
   // and check observation register, all bits 0-3 must be set
   while((get_reg(REG_OBSERVATION) & 0x0F) != 0x0F) {
-    delayMicroseconds(250);
+    delayMicroseconds(500);
     --motion;
     if(!motion) {
       motion = 200;
@@ -237,10 +233,6 @@ void setup() {
 
   motion = 0;
 
-  // set motion pin as interrupt input FALLING
-  pinMode(MOTION_PIN, INPUT_PULLUP);
-  attachInterrupt(MOTION_PIN, set_motion, FALLING);
-
   // quadrature outputs
   pinMode(QXA, OUTPUT);
   pinMode(QXB, OUTPUT);
@@ -251,7 +243,7 @@ void setup() {
   digitalWrite(QXB, LOW);
   digitalWrite(QYA, LOW);
   digitalWrite(QYB, LOW);
-
+  
   quad_x = 0;
   quad_y = 0;
 
@@ -269,23 +261,24 @@ void setup() {
 
   SW_state = (digitalRead(QRA) << 1) + digitalRead(QRB);
 
+  mmb_trigger = 0;
   attachInterrupt(MMB, mmb_falling, FALLING);
+
+  // set motion pin as interrupt input FALLING
+  attachInterrupt(MOTION_PIN, set_motion, FALLING);
 }
 
-unsigned int reg_val, change_period;
+unsigned int reg_val, change_period_x, change_period_y;
+unsigned long mnow, last_change_x, last_change_y;
 unsigned int delta_x_raw, delta_y_raw, delta_xy_raw;
 const unsigned int quad_state[] = { 0, 1, 3, 2 };
-
 unsigned char output_sweep = 0;
+unsigned long last_update;
 
 void loop() {
+//  if((motion) || ((millis() - last_update) > 250)) {
   if(motion) {
-#ifdef GPIO_OUT_SET_SUB
-      GPIO_OUT_SET_SUB(1, 0);
-#else
-    digitalWrite(RED_LED, HIGH);
-#endif
-
+    last_update = millis();
 #if 0
 //    get_reg(REG_OBSERVATION); // 0x2e
 //    reg_val = get_reg(REG_MOTION); // 0x02
@@ -324,15 +317,19 @@ void loop() {
     digitalWrite(RED_LED, LOW);
 #endif
 
-    --motion;
+    if(motion)
+      --motion;
 
   // for 16MHz 1650
-  // for 8MHz  800
-    change_period = constrain(100 * MHZ / max(abs(delta_x),abs(delta_y)), 5, 100 * MHZ);
+    change_period_x = constrain(90 * MHZ / abs(delta_x), 5, 90 * MHZ);
+    change_period_y = constrain(90 * MHZ / abs(delta_y), 5, 90 * MHZ);
+
   } else {
-    if((delta_x != 0) || (delta_y != 0))
-      delayMicroseconds(change_period);
-    else {
+  
+//    if((delta_x != 0) || (delta_y != 0))
+//      delayMicroseconds(min(change_period_x, change_period_y));
+//    else
+    {
       SW_state &= 0x3;
       SW_state <<= 2;
       SW_state += (digitalRead(QRB) << 1) + digitalRead(QRA);
@@ -366,7 +363,10 @@ void loop() {
     }
   }
 
-  if(delta_x != 0) {
+  mnow = micros();
+
+  if((delta_x != 0) && ((mnow - last_change_x) > change_period_x)) {
+    last_change_x = mnow;
     if(delta_x > 0) {
       ++quad_x;
       --delta_x;
@@ -376,21 +376,16 @@ void loop() {
     }
     quad_x &= 0x03;
 #ifdef GPIO_OUT_SET_SUB
-    if(quad_state[quad_x] & 0x01)
-      GPIO_OUT_SET_SUB(2, 1);
-    else
-      GPIO_OUT_CLR_SUB(2, 1);
-    if(quad_state[quad_x] & 0x02)
-      GPIO_OUT_SET_SUB(2, 2);
-    else
-      GPIO_OUT_CLR_SUB(2, 2);
+    (quad_state[quad_x] & 0x01)?GPIO_OUT_SET_SUB(2, 1):GPIO_OUT_CLR_SUB(2, 1);
+    (quad_state[quad_x] & 0x02)?GPIO_OUT_SET_SUB(2, 2):GPIO_OUT_CLR_SUB(2, 2);
 #else
     digitalWrite(QXA, (quad_state[quad_x] & 0x01)?HIGH:LOW);
     digitalWrite(QXB, (quad_state[quad_x] & 0x02)?HIGH:LOW);
 #endif
   }
 
-  if(delta_y != 0) {
+  if((delta_y != 0) && ((mnow - last_change_y) > change_period_y)) {
+    last_change_y = mnow;
     if(delta_y > 0) {
       ++quad_y;
       --delta_y;
@@ -464,7 +459,8 @@ void get_burst() {
 #endif
   //  send in the address and value via SPI:
   SPI.transfer(REG_MBURST);
-  delayMicroseconds(MHZ / 4);
+  // tSRAD
+  delayMicroseconds(4);
   value = SPI.transfer(0xFF); // MOTION 0x02
   delta_x_raw = SPI.transfer(0xFF); // REG_DELTA_X 0x03
   delta_y_raw = SPI.transfer(0xFF); // REG_DELTA_Y 0x04
@@ -479,7 +475,14 @@ void get_burst() {
 
 void set_motion() {
   ++motion;
+#ifdef GPIO_OUT_SET_SUB
+  GPIO_OUT_SET_SUB(1, 0);
+#else
+  digitalWrite(RED_LED, HIGH);
+#endif
+  digitalWrite(QXA, HIGH);
 }
+
 volatile byte quad_raw_out, test, button_state;
 
 //P2_0 RMB
@@ -536,14 +539,17 @@ void mmb_falling() {
 //  if(button_state_5th)
 //    P2OUT |= BIT4; // 5th
 
-  // 25 (32us) ... 33 (44us) 
-//  delayMicroseconds(33);
-  while(!(P1IN & BIT4));
+  // total time of MMB low: 64...65us
+  // 32us) ... 33 (45us) 
+  delayMicroseconds(70);
 #else // EZMOUSE
-  delayMicroseconds(20);
-//  while(!(P1IN & BIT4));
+//  delayMicroseconds(65);
 #endif
+
+//  while(!(P1IN & BIT4));
 
 //  pinMode(MMB, INPUT_PULLUP);
   P2OUT = quad_raw_out;
+
+  mmb_trigger = 1;
 }
