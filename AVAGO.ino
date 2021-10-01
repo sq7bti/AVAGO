@@ -157,7 +157,7 @@ void setup() {
 
   // initialize SPI:
   SPI.begin(); 
-  SPI.setClockDivider(MHZ); // 2MHz SPI
+  SPI.setClockDivider(MHZ/2); // 2MHz SPI
 
   delayMicroseconds(250);
 
@@ -259,7 +259,8 @@ void setup() {
   pinMode(LMB, OUTPUT); // connected via diodes to corresponding pins in DB9
   pinMode(RMB, OUTPUT); // connected via diodes to corresponding pins in DB9
 
-  SW_state = (digitalRead(QRA) << 1) + digitalRead(QRB);
+//  SW_state = (digitalRead(QRA) << 1) + digitalRead(QRB);
+  SW_state = (P2IN >> 6) & 0x03;
 
   mmb_trigger = 0;
   attachInterrupt(MMB, mmb_falling, FALLING);
@@ -276,9 +277,10 @@ unsigned char output_sweep = 0;
 unsigned long last_update;
 
 void loop() {
-//  if((motion) || ((millis() - last_update) > 250)) {
-  if(motion) {
-    last_update = millis();
+  if(motion) { //|| ((millis() - last_update) > 250)) {
+
+//    last_update = millis();
+
 #if 0
 //    get_reg(REG_OBSERVATION); // 0x2e
 //    reg_val = get_reg(REG_MOTION); // 0x02
@@ -286,7 +288,9 @@ void loop() {
     delta_y_raw = get_reg(REG_DELTA_Y); // 0x04
     delta_xy_raw = get_reg(REG_DELTA_XY_H); // 0x05
 #else
+
     get_burst();
+
 #if DEBUG
     get_reg(REG_SQUAL); //    0x06
     get_reg(REG_MAX_PIXEL); //    0x09
@@ -332,7 +336,9 @@ void loop() {
     {
       SW_state &= 0x3;
       SW_state <<= 2;
-      SW_state += (digitalRead(QRB) << 1) + digitalRead(QRA);
+//      SW_state += (digitalRead(QRB) << 1) + digitalRead(QRA);
+      SW_state |= (P2IN >> 6) & 0x03;
+
 
 //             >>> increase
 //         _______     _______
@@ -395,14 +401,8 @@ void loop() {
     }
     quad_y &= 0x03;
 #ifdef GPIO_OUT_SET_SUB
-    if(quad_state[quad_y] & 0x01)
-      GPIO_OUT_SET_SUB(2, 3);
-    else
-      GPIO_OUT_CLR_SUB(2, 3);
-    if(quad_state[quad_y] & 0x02)
-      GPIO_OUT_SET_SUB(2, 4);
-    else
-      GPIO_OUT_CLR_SUB(2, 4);
+    (quad_state[quad_y] & 0x01)?GPIO_OUT_SET_SUB(2, 3):GPIO_OUT_CLR_SUB(2, 3);
+    (quad_state[quad_y] & 0x02)?GPIO_OUT_SET_SUB(2, 4):GPIO_OUT_CLR_SUB(2, 4);
 #else
     digitalWrite(QYA, (quad_state[quad_y] & 0x01)?HIGH:LOW);
     digitalWrite(QYB, (quad_state[quad_y] & 0x02)?HIGH:LOW);
@@ -462,6 +462,7 @@ void get_burst() {
   // tSRAD
   delayMicroseconds(4);
   value = SPI.transfer(0xFF); // MOTION 0x02
+  delayMicroseconds(1);
   delta_x_raw = SPI.transfer(0xFF); // REG_DELTA_X 0x03
   delta_y_raw = SPI.transfer(0xFF); // REG_DELTA_Y 0x04
   delta_xy_raw = SPI.transfer(0xFF); // REG_DELTA_XY_H 0x05
@@ -480,7 +481,6 @@ void set_motion() {
 #else
   digitalWrite(RED_LED, HIGH);
 #endif
-  digitalWrite(QXA, HIGH);
 }
 
 volatile byte quad_raw_out, test, button_state;
@@ -540,10 +540,11 @@ void mmb_falling() {
 //    P2OUT |= BIT4; // 5th
 
   // total time of MMB low: 64...65us
-  // 32us) ... 33 (45us) 
-  delayMicroseconds(70);
+  // excluding ISR reaction: 32us ... 33 (45us) 
+
+  delayMicroseconds(45);
 #else // EZMOUSE
-//  delayMicroseconds(65);
+  delayMicroseconds(30);
 #endif
 
 //  while(!(P1IN & BIT4));
