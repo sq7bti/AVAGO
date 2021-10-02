@@ -185,7 +185,7 @@ void setup() {
   set_reg(REG_LSRPWR_CFG1, ~LASER_POWER); // 0x1d (0x9d)
 
 /* CONFIG2_400CPI, CONFIG2_800CPI, CONFIG2_1200CPI, CONFIG2_1600CPI */
-  set_reg(REG_CONFIGURATION2, CONFIG2_1600CPI); //   0x12 (0x92)
+  set_reg(REG_CONFIGURATION2, CONFIG2_400CPI); //   0x12 (0x92)
 
   // wait for at least one frame ?
   delayMicroseconds(250);
@@ -601,7 +601,7 @@ void mmb_falling() {
     }
 #endif
   } else {
-    P2OUT =  BIT0 | button_state | BIT6 | BIT7;
+    P2OUT =  BIT0 | button_state | BIT6 | BIT7 | (quad_raw_out & (BIT2 | BIT3));
 
     // middle button state MMB
 //  if(buttons & BIT0) // P1IN & BIT3) {
@@ -621,7 +621,7 @@ void mmb_falling() {
   // total time of MMB low: 64...65us
   // excluding ISR reaction: 32us ... 33 (45us) 
 
-  delayMicroseconds(42);
+  delayMicroseconds(47);
 #else // EZMOUSE
   delayMicroseconds(30);
 #endif
