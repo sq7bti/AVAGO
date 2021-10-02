@@ -138,13 +138,14 @@ QXA QXB QYA QYB RMB
 #define MHZ 12
 #define SET_CPU_CLOCK(mhz) { DCOCTL = CALDCO_##mhz##MHZ; BCSCTL1 = CALBC1_##mhz##MHZ; };
 
-unsigned int motion = 200, k = 0;
+unsigned int motion = 200, k = 0, adc_avg;
 unsigned int quad_x, quad_y;
 signed delta_x, delta_y;
 
 volatile unsigned char SW_state;
 volatile signed int scroll_change = 0;
-volatile byte mmb_trigger;
+volatile byte mmb_trigger; //, buttons;
+int adc[16] = {0}; //Sets up an array of 16 integers and zero's the values
 
 void setup() {
 
@@ -157,7 +158,7 @@ void setup() {
 
   // initialize SPI:
   SPI.begin(); 
-  SPI.setClockDivider(MHZ/2); // 2MHz SPI
+  SPI.setClockDivider(16); // 1MHz SPI
 
   delayMicroseconds(250);
 
@@ -184,7 +185,7 @@ void setup() {
   set_reg(REG_LSRPWR_CFG1, ~LASER_POWER); // 0x1d (0x9d)
 
 /* CONFIG2_400CPI, CONFIG2_800CPI, CONFIG2_1200CPI, CONFIG2_1600CPI */
-  set_reg(REG_CONFIGURATION2, CONFIG2_400CPI); //   0x12 (0x92)
+  set_reg(REG_CONFIGURATION2, CONFIG2_1600CPI); //   0x12 (0x92)
 
   // wait for at least one frame ?
   delayMicroseconds(250);
@@ -255,7 +256,6 @@ void setup() {
   pinMode(QRB, INPUT_PULLUP);
   pinMode(MMB, INPUT_PULLUP); // set it as output only when we need to pull it down
 
-  pinMode(MMBUTT, INPUT_PULLUP); // input from left mouse button switch
   pinMode(LMB, OUTPUT); // connected via diodes to corresponding pins in DB9
   pinMode(RMB, OUTPUT); // connected via diodes to corresponding pins in DB9
 
@@ -267,6 +267,21 @@ void setup() {
 
   // set motion pin as interrupt input FALLING
   attachInterrupt(MOTION_PIN, set_motion, FALLING);
+
+  // setting up ADC on pin P1_3
+//  pinMode(MMBUTT, INPUT_PULLUP); // input from left mouse button switch
+  ADC10CTL1 = CONSEQ_2 | INCH_3 | ADC10DIV_7;            // Repeat single channel, A3
+  ADC10CTL0 = SREF_0 + ADC10SHT_2 + MSC + ADC10ON + ADC10IE; // Sample & Hold Time + ADC10 ON + Interrupt Enable
+
+  ADC10DTC1 = 0x10;                 // 16 conversions
+  ADC10DTC0 |= ADC10CT;                 // continuous transfer
+  ADC10AE0 |= BIT3;                 // P1.3 ADC option select
+
+  ADC10CTL0 &= ~ENC;        // Disable Conversion
+  while (ADC10CTL1 & BUSY);   // Wait if ADC10 busy
+  ADC10SA = (int)adc;       // Transfers data to next array (DTC auto increments address)
+  ADC10CTL0 |= ENC + ADC10SC;   // Enable Conversion and conversion start
+
 }
 
 unsigned int reg_val, change_period_x, change_period_y;
@@ -275,6 +290,7 @@ unsigned int delta_x_raw, delta_y_raw, delta_xy_raw;
 const unsigned int quad_state[] = { 0, 1, 3, 2 };
 unsigned char output_sweep = 0;
 unsigned long last_update;
+volatile byte button_state;
 
 void loop() {
   if(motion) { //|| ((millis() - last_update) > 250)) {
@@ -324,9 +340,8 @@ void loop() {
     if(motion)
       --motion;
 
-  // for 16MHz 1650
-    change_period_x = constrain(90 * MHZ / abs(delta_x), 5, 90 * MHZ);
-    change_period_y = constrain(90 * MHZ / abs(delta_y), 5, 90 * MHZ);
+    change_period_x = constrain(1000 / abs(delta_x), 5, 2000);
+    change_period_y = constrain(1000 / abs(delta_y), 5, 2000);
 
   } else {
   
@@ -409,6 +424,76 @@ void loop() {
 #endif
   }
 
+  adc_avg = 1024 - ((adc[0]+adc[1]+adc[2]+adc[3]+adc[4]+adc[5]+adc[6]+adc[7]+adc[8]+adc[9]+adc[10]+adc[11]+adc[12]+adc[13]+adc[14]+adc[15]) / 16);
+
+// 000 - 0
+#define THR1 55
+// 001 - 109 ... 113
+#define THR2 122
+// 010 - 179 ... 183
+#define THR3 220
+// 011 - 257 ... 267
+#define THR4 300
+// 100 - 333 ... 336
+#define THR5 364
+// 101 - 392 ... 394
+#define THR6 412
+// 110 - 430 ... 434
+#define THR7 440
+// 111 - 446 ... 462
+
+//       7654 3210
+//000 -> 0000 0000 
+//001 -> 0010 0000 
+//010 -> 0001 0000 
+//011 -> 0011 0000 
+//100 -> 0000 0010 
+//101 -> 0010 0010 
+//110 -> 0001 0010 
+//111 -> 0011 0010 
+
+//  buttons = 7;
+  if(adc_avg > THR7) {
+//    buttons = 0; //0;
+    button_state = 0;
+  } else {
+    if(adc_avg > THR6) {
+//      buttons = 1; //0x20; //1;
+      button_state = BIT5;
+    } else {
+      if(adc_avg > THR5) {
+//        buttons = 2; //0x10; //2;
+        button_state = BIT1;
+      } else {
+        if(adc_avg > THR4) {
+//          buttons = 3; //0x30; //3;
+          button_state = BIT1 | BIT5;
+        } else {
+          if(adc_avg > THR3) {
+//            buttons = 4; //0x02; //4;
+            button_state = BIT4 | BIT1;
+          } else {
+            if(adc_avg > THR2) {
+//              buttons = 5; //0x22; //5;
+              button_state = BIT4 | BIT5;
+            } else {
+              if(adc_avg > THR1) {
+//                buttons = 6; //0x12; //6;
+                button_state = BIT4 | BIT1;
+              } else {
+//                buttons = 7; //0x32; //7;
+                button_state = BIT4 | BIT1 | BIT5;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+//  buttons ^= 0xff;
+//  buttons &= 0x32;
+//                      BIT4                     BIT1               BIT5
+//  button_state = ((buttons & BIT2) << 2) | (buttons & BIT1) | ((buttons & BIT0) << 5);
 }
 
 void set_reg(int address, int value) {
@@ -462,7 +547,7 @@ void get_burst() {
   // tSRAD
   delayMicroseconds(4);
   value = SPI.transfer(0xFF); // MOTION 0x02
-  delayMicroseconds(1);
+//  delayMicroseconds(1);
   delta_x_raw = SPI.transfer(0xFF); // REG_DELTA_X 0x03
   delta_y_raw = SPI.transfer(0xFF); // REG_DELTA_Y 0x04
   delta_xy_raw = SPI.transfer(0xFF); // REG_DELTA_XY_H 0x05
@@ -483,7 +568,7 @@ void set_motion() {
 #endif
 }
 
-volatile byte quad_raw_out, test, button_state;
+volatile byte quad_raw_out, test;
 
 //P2_0 RMB
 //P2_1 QXA
@@ -499,50 +584,44 @@ void mmb_falling() {
   if(scroll_change != 0) {
 #ifdef COCOLINO
     if(scroll_change < 0) {
-      P2OUT = BIT1; //QXA
+      P2OUT =  BIT1 | BIT6 | BIT7 | (button_state & BIT5); //QXA
       ++scroll_change;
     } else {
-      P2OUT = 0; // RMB
+      P2OUT = BIT6 | BIT7 | (button_state & BIT5); // RMB
       --scroll_change;
     }
 #else // EZMOUSE
     //         RMB clear
     if(scroll_change < 0) {
-      P2OUT = BIT1; // QXA
+      P2OUT =  BIT1 | BIT5 | BIT6 | BIT7; // | ((buttons & BIT1)?BIT5:0); // QXA
       ++scroll_change;
     } else  {
-      P2OUT = BIT4; // QYB
+      P2OUT =  BIT4 | BIT5 | BIT6 | BIT7; // | ((buttons & BIT1)?BIT5:0); // QYB
       --scroll_change;
     }
 #endif
   } else {
-    P2OUT = BIT0; // RMB
-    --test;
-    if(!test) {
-      test = 255;
-      button_state ^= 0x01;
-    }
-  }
+    P2OUT =  BIT0 | button_state | BIT6 | BIT7;
 
-  // middle button state MMBUTT
-  if(P1IN & BIT3) {
-    P2OUT |= BIT5; // MMB
-  }
-
-#ifdef COCOLINO
+    // middle button state MMB
+//  if(buttons & BIT0) // P1IN & BIT3) {
+//    P2OUT |= BIT5; // LMB
 
   // 4th QXA
-//  if(button_state_4th)
+//  if(buttons & BIT1) //button_state_4th)
 //    P2OUT |= BIT1; // 4th
 
   // 5th QYB
-//  if(button_state_5th)
+//  if(buttons & BIT2) //button_state_5th)
 //    P2OUT |= BIT4; // 5th
+}
+
+#ifdef COCOLINO
 
   // total time of MMB low: 64...65us
   // excluding ISR reaction: 32us ... 33 (45us) 
 
-  delayMicroseconds(45);
+  delayMicroseconds(42);
 #else // EZMOUSE
   delayMicroseconds(30);
 #endif
