@@ -67,12 +67,19 @@ QXA QXB QYA QYB RMB
 // wheel protocol used (use appropriate driver on host)
 #define COCOLINO
 
-#define  REG_PRODUCT_ID   0x00
+#define  REG_PRODUCT_ID       0x00
 #define  REG_INV_PRODUCT_ID   0x3E
-#define  REG_REVISION_ID  0x01
+#define  REG_REVISION_ID      0x01
 #define  REG_INV_REVISION_ID  0x3F
 
-#define  REG_MOTION       0x02
+#define  REG_MOTION           0x02
+#define  REG_MOTION_MOT       0x80
+#define  REG_MOTION_PIXRDY    0x40
+#define  REG_MOTION_PIXFIRST  0x20
+#define  REG_MOTION_OVF       0x10
+#define  REG_MOTION_LP_VALID  0x08
+#define  REG_MOTION_FAULT     0x04
+
 #define  REG_DELTA_X      0x03
 #define  REG_DELTA_Y      0x04
 #define  REG_DELTA_XY_H   0x05
@@ -92,9 +99,9 @@ QXA QXB QYA QYB RMB
 #define  LASER_5MA        0x30
 #define  LASER_10MA       0xC0
 
-#define  LASER_RANGE      LASER_3MA
+#define  LASER_RANGE      LASER_10MA
 /* 0x00 -> 33.6%, 0xff -> 100%*/
-#define  LASER_POWER      0x70
+#define  LASER_POWER      0xB2
 
 #define  REG_LASER_CTRL0  0x1a
 #define  REG_LASER_CTRL1  0x1f
@@ -139,13 +146,54 @@ QXA QXB QYA QYB RMB
 #define SET_CPU_CLOCK(mhz) { DCOCTL = CALDCO_##mhz##MHZ; BCSCTL1 = CALBC1_##mhz##MHZ; };
 
 unsigned int motion = 200, k = 0, adc_avg;
-unsigned int quad_x, quad_y;
+unsigned int quad_x, quad_y, t;
 signed delta_x, delta_y;
 
 volatile unsigned char SW_state;
 volatile signed int scroll_change = 0;
 volatile byte mmb_trigger; //, buttons;
 int adc[16] = {0}; //Sets up an array of 16 integers and zero's the values
+volatile unsigned long mmb_activity;
+
+void set_reg(int address, int value) {
+  // take the SS pin low to select the chip:
+#ifdef GPIO_OUT_SET_SUB
+  GPIO_OUT_CLR_SUB(1, 2);
+#else
+  digitalWrite(NCS,LOW);
+#endif
+  //  send in the address and value via SPI:
+  SPI.transfer(0x80 | address);
+  SPI.transfer(value);
+  // take the SS pin high to de-select the chip:
+#ifdef GPIO_OUT_SET_SUB
+  GPIO_OUT_SET_SUB(1, 2);
+#else
+  digitalWrite(NCS,HIGH); 
+#endif
+}
+
+int get_reg(int address) {
+  unsigned int value = 0xFF;
+  // take the SS pin low to select the chip:
+#ifdef GPIO_OUT_SET_SUB
+  GPIO_OUT_CLR_SUB(1, 2);
+#else
+  digitalWrite(NCS,LOW);
+#endif
+  //  send in the address and value via SPI:
+  SPI.transfer(address);
+  // tSRAD
+  delayMicroseconds(4);
+  value = SPI.transfer(0xFF);
+  // take the SS pin high to de-select the chip:
+#ifdef GPIO_OUT_SET_SUB
+  GPIO_OUT_SET_SUB(1, 2);
+#else
+  digitalWrite(NCS,HIGH); 
+#endif
+  return value;
+}
 
 void setup() {
 
@@ -285,17 +333,57 @@ void setup() {
 }
 
 unsigned int reg_val, change_period_x, change_period_y;
-unsigned long mnow, last_change_x, last_change_y;
+unsigned long mnow, last_change_x, last_change_y, last_change_z;
 unsigned int delta_x_raw, delta_y_raw, delta_xy_raw;
+
+//             >>> increment
+//         _______     _______
+//   A  ___|     |_____|     |___
+//            _______     _______
+//   B  ______|     |_____|
+//       00 01 11 10 00 01 11 10
+
 const unsigned int quad_state[] = { 0, 1, 3, 2 };
 unsigned char output_sweep = 0;
 unsigned long last_update;
 volatile byte button_state;
+unsigned int motion_status;
+
+unsigned int get_burst(bool get_all = true) {
+  unsigned int value = 0xFF;
+  // take the SS pin low to select the chip:
+#ifdef GPIO_OUT_SET_SUB
+  GPIO_OUT_CLR_SUB(1, 2);
+#else
+  digitalWrite(NCS,LOW);
+#endif
+  //  send in the address and value via SPI:
+  SPI.transfer(REG_MBURST);
+  // tSRAD
+  delayMicroseconds(4);
+  value = SPI.transfer(0xFF); // MOTION 0x02
+  if(get_all || (value & REG_MOTION_MOT)) {
+    delta_x_raw = SPI.transfer(0xFF); // REG_DELTA_X 0x03
+    delta_y_raw = SPI.transfer(0xFF); // REG_DELTA_Y 0x04
+    delta_xy_raw = SPI.transfer(0xFF); // REG_DELTA_XY_H 0x05
+  } else {
+    // no change so no need to retrieve registers
+    delta_x_raw = delta_y_raw = delta_xy_raw = 0x00;
+  }
+  // take the SS pin high to de-select the chip:
+#ifdef GPIO_OUT_SET_SUB
+  GPIO_OUT_SET_SUB(1, 2);
+#else
+  digitalWrite(NCS,HIGH); 
+#endif
+
+  return value;
+}
 
 void loop() {
-  if(motion) { //|| ((millis() - last_update) > 250)) {
+  if((motion) || ((millis() - last_update) > 250)) {
 
-//    last_update = millis();
+    last_update = millis();
 
 #if 0
 //    get_reg(REG_OBSERVATION); // 0x2e
@@ -305,7 +393,20 @@ void loop() {
     delta_xy_raw = get_reg(REG_DELTA_XY_H); // 0x05
 #else
 
-    get_burst();
+    motion_status = get_burst(false);
+
+    while((motion_status == 0xFF) && \
+          (delta_xy_raw == 0xFF) && \
+          (delta_y_raw == 0xFF) && \
+          (delta_x_raw == 0xFF)) {
+        delay(2);
+        motion_status = get_burst(false);
+#ifdef GPIO_OUT_SET_SUB
+        GPIO_OUT_CLR_SUB(1, 0);
+#else
+        digitalWrite(RED_LED, HIGH);
+#endif
+    }
 
 #if DEBUG
     get_reg(REG_SQUAL); //    0x06
@@ -343,17 +444,15 @@ void loop() {
     change_period_x = constrain(1000 / abs(delta_x), 5, 2000);
     change_period_y = constrain(1000 / abs(delta_y), 5, 2000);
 
-  } else {
-  
-//    if((delta_x != 0) || (delta_y != 0))
-//      delayMicroseconds(min(change_period_x, change_period_y));
-//    else
-    {
-      SW_state &= 0x3;
-      SW_state <<= 2;
-//      SW_state += (digitalRead(QRB) << 1) + digitalRead(QRA);
-      SW_state |= (P2IN >> 6) & 0x03;
+  }
+  mnow = micros();
 
+  if(((mnow - last_change_z) > 25)) {
+    last_change_z = mnow;
+
+    SW_state &= 0x3;
+    SW_state <<= 2;
+    SW_state |= (P2IN >> 6) & 0x03;
 
 //             >>> increase
 //         _______     _______
@@ -362,29 +461,26 @@ void loop() {
 // QRB  ______|     |_____|
 //       00 01 11 10 00 01 11 10
 
-      switch(SW_state) {
-        // 0001, 0111, 1110, 1000
-        case 0x1:
-        case 0x7:
-        case 0xE:
-        case 0x8:
-          ++scroll_change;
-        break;
-        // 0100, 1101, 1011, 0010
-        case 0x4:
-        case 0xD:
-        case 0xB:
-        case 0x2:
-          --scroll_change;
-        break;
-        default:
-        // 0000, 0101, 1111, 1010 -> no change
-        break;
-      }
+    switch(SW_state) {
+      // 0001, 0111, 1110, 1000
+      case 0x1:
+      case 0x7:
+      case 0xE:
+      case 0x8:
+        ++scroll_change;
+      break;
+      // 0100, 1101, 1011, 0010
+      case 0x4:
+      case 0xD:
+      case 0xB:
+      case 0x2:
+        --scroll_change;
+      break;
+      default:
+      // 0000, 0101, 1111, 1010 -> no change
+      break;
     }
   }
-
-  mnow = micros();
 
   if((delta_x != 0) && ((mnow - last_change_x) > change_period_x)) {
     last_change_x = mnow;
@@ -429,18 +525,18 @@ void loop() {
 // 000 - 0
 #define THR1 55
 // 001 - 109 ... 113
-#define THR2 122
+#define THR2 146
 // 010 - 179 ... 183
 #define THR3 220
 // 011 - 257 ... 267
-#define THR4 300
-// 100 - 333 ... 336
-#define THR5 364
-// 101 - 392 ... 394
-#define THR6 412
-// 110 - 430 ... 434
-#define THR7 440
-// 111 - 446 ... 462
+#define THR4 298
+// 100 - 328 ... 331
+#define THR5 356
+// 101 - 380 ... 383
+#define THR6 399
+// 110 - 415 ... 420
+#define THR7 439
+// 111 - 457 ... 459
 
 //       7654 3210
 //000 -> 0000 0000 
@@ -494,69 +590,18 @@ void loop() {
 //  buttons &= 0x32;
 //                      BIT4                     BIT1               BIT5
 //  button_state = ((buttons & BIT2) << 2) | (buttons & BIT1) | ((buttons & BIT0) << 5);
-}
 
-void set_reg(int address, int value) {
-  // take the SS pin low to select the chip:
-#ifdef GPIO_OUT_SET_SUB
-  GPIO_OUT_CLR_SUB(1, 2);
-#else
-  digitalWrite(NCS,LOW);
-#endif
-  //  send in the address and value via SPI:
-  SPI.transfer(0x80 | address);
-  SPI.transfer(value);
-  // take the SS pin high to de-select the chip:
-#ifdef GPIO_OUT_SET_SUB
-  GPIO_OUT_SET_SUB(1, 2);
-#else
-  digitalWrite(NCS,HIGH); 
-#endif
-}
-
-int get_reg(int address) {
-  unsigned int value = 0xFF;
-  // take the SS pin low to select the chip:
-#ifdef GPIO_OUT_SET_SUB
-  GPIO_OUT_CLR_SUB(1, 2);
-#else
-  digitalWrite(NCS,LOW);
-#endif
-  //  send in the address and value via SPI:
-  SPI.transfer(address);
-  value = SPI.transfer(0xFF);
-  // take the SS pin high to de-select the chip:
-#ifdef GPIO_OUT_SET_SUB
-  GPIO_OUT_SET_SUB(1, 2);
-#else
-  digitalWrite(NCS,HIGH); 
-#endif
-  return value;
-}
-
-void get_burst() {
-  unsigned int value = 0xFF;
-  // take the SS pin low to select the chip:
-#ifdef GPIO_OUT_SET_SUB
-  GPIO_OUT_CLR_SUB(1, 2);
-#else
-  digitalWrite(NCS,LOW);
-#endif
-  //  send in the address and value via SPI:
-  SPI.transfer(REG_MBURST);
-  // tSRAD
-  delayMicroseconds(4);
-  value = SPI.transfer(0xFF); // MOTION 0x02
-//  delayMicroseconds(1);
-  delta_x_raw = SPI.transfer(0xFF); // REG_DELTA_X 0x03
-  delta_y_raw = SPI.transfer(0xFF); // REG_DELTA_Y 0x04
-  delta_xy_raw = SPI.transfer(0xFF); // REG_DELTA_XY_H 0x05
-  // take the SS pin high to de-select the chip:
-#ifdef GPIO_OUT_SET_SUB
-  GPIO_OUT_SET_SUB(1, 2);
-#else
-  digitalWrite(NCS,HIGH); 
-#endif
+/*
+  // detect MMB press -> if no activity on MMB line from mouse driver - use pin to simulate real button
+  if((!(button_state & BIT5)) && ((millis() - mmb_activity) > 100)) {
+    detachInterrupt(MMB);
+    pinMode(MMB, OUTPUT);
+    digitalWrite(MMB, LOW);
+  } else {
+    pinMode(MMB, INPUT_PULLUP); // set it as output only when we need to pull it down
+    attachInterrupt(MMB, mmb_falling, FALLING);
+  }
+*/
 }
 
 void set_motion() {
@@ -632,4 +677,6 @@ void mmb_falling() {
   P2OUT = quad_raw_out;
 
   mmb_trigger = 1;
+  mmb_activity = millis();
+  ++motion;
 }
