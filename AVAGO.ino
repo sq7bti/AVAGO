@@ -335,8 +335,9 @@ void setup() {
 
 }
 
-unsigned int reg_val, change_period_x, change_period_y;
-unsigned long mnow, last_change_x, last_change_y, last_change_z;
+unsigned int reg_val;
+long change_period_x, change_period_y, change_period_lapsed_x, change_period_lapsed_y;
+unsigned long last_change_z, mnow;
 unsigned int delta_x_raw, delta_y_raw, delta_xy_raw;
 
 //             >>> increment
@@ -445,13 +446,19 @@ void loop() {
     if(motion)
       --motion;
 
-    change_period_x = constrain(1000 / abs(delta_x), 5, 2000);
-    change_period_y = constrain(1000 / abs(delta_y), 5, 2000);
+    if(motion_status & REG_MOTION_MOT) {
+      if(delta_x != 0)
+        change_period_x = constrain(100 / (1 + abs(delta_x)), 1, 35);
+      if(delta_y != 0)
+        change_period_y = constrain(100 / (1 + abs(delta_y)), 1, 35);
+      change_period_lapsed_x = 0;
+      change_period_lapsed_y = 0;
+    }
 
   }
-  mnow = micros();
 
-  if(((mnow - last_change_z) > 25)) {
+  mnow = millis();
+  if(((mnow - last_change_z) > 2)) {
     last_change_z = mnow;
 
     SW_state &= 0x3;
@@ -486,8 +493,7 @@ void loop() {
     }
   }
 
-  if((delta_x != 0) && ((mnow - last_change_x) > change_period_x)) {
-    last_change_x = mnow;
+  if((delta_x != 0) && (!change_period_lapsed_x)) {
     if(delta_x > 0) {
       ++quad_x;
       --delta_x;
@@ -503,10 +509,11 @@ void loop() {
     digitalWrite(QXA, (quad_state[quad_x] & 0x01)?HIGH:LOW);
     digitalWrite(QXB, (quad_state[quad_x] & 0x02)?HIGH:LOW);
 #endif
+    change_period_lapsed_x = change_period_x;
   }
+  --change_period_lapsed_x;
 
-  if((delta_y != 0) && ((mnow - last_change_y) > change_period_y)) {
-    last_change_y = mnow;
+  if((delta_y != 0) && (!change_period_lapsed_y)) {
     if(delta_y > 0) {
       ++quad_y;
       --delta_y;
@@ -522,7 +529,9 @@ void loop() {
     digitalWrite(QYA, (quad_state[quad_y] & 0x01)?HIGH:LOW);
     digitalWrite(QYB, (quad_state[quad_y] & 0x02)?HIGH:LOW);
 #endif
+    change_period_lapsed_y = change_period_y;
   }
+  --change_period_lapsed_y;
 
   adc_avg = 1024 - ((adc[0]+adc[1]+adc[2]+adc[3]+adc[4]+adc[5]+adc[6]+adc[7]+adc[8]+adc[9]+adc[10]+adc[11]+adc[12]+adc[13]+adc[14]+adc[15]) / 16);
 
