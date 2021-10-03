@@ -307,6 +307,9 @@ void setup() {
   pinMode(LMB, OUTPUT); // connected via diodes to corresponding pins in DB9
   pinMode(RMB, OUTPUT); // connected via diodes to corresponding pins in DB9
 
+  digitalWrite(LMB, HIGH);
+  digitalWrite(RMB, HIGH);
+
 //  SW_state = (digitalRead(QRA) << 1) + digitalRead(QRB);
   SW_state = (P2IN >> 6) & 0x03;
 
@@ -381,9 +384,10 @@ unsigned int get_burst(bool get_all = true) {
 }
 
 void loop() {
-  if((motion) || ((millis() - last_update) > 250)) {
+  if((motion) || (mmb_trigger && ((millis() - last_update) > 100))) {
 
     last_update = millis();
+    mmb_trigger = 0;
 
 #if 0
 //    get_reg(REG_OBSERVATION); // 0x2e
@@ -615,16 +619,16 @@ void set_motion() {
 
 volatile byte quad_raw_out, test;
 
-//P2_0 RMB
+//P2_0 RMB -> HIGH
 //P2_1 QXA
 //P2_2 QXB
 //P2_3 QYA
 //P2_4 QYB
-//P2_5 LMB
+//P2_5 LMB -> HIGH
 
 void mmb_falling() {
 
-  quad_raw_out = P2OUT;
+  quad_raw_out = P2OUT | BIT0 | BIT5;
 
   if(scroll_change != 0) {
 #ifdef COCOLINO
@@ -678,5 +682,5 @@ void mmb_falling() {
 
   mmb_trigger = 1;
   mmb_activity = millis();
-  ++motion;
+//  ++motion;
 }
