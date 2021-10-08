@@ -7,31 +7,31 @@
 // MISO P1.7
 // MOSI P1.6
 // CLK  P1.5
-// set pin 8 as the slave select for the digital pot:
 // CS   P1.2
 
                                  ______________
-                            Vcc  |            | GND
-                  RED_LED   P1_0 |            | P2_6   QRA
+                            Vcc  |            | GND                DB9 8
+             3b/ADC input   P1_0 |            | P2_6   QRA
                MOTION/IRQ   P1_1 |            | P2_7   QRB
                       CS    P1_2 |            | TEST
-                            P1_3 |            | RESET
-        DB9 5         MMB   P1_4 |            | P1_7   MISO
-                      CLK   P1_5 |            | P1_6   MOSI
-        DB9 9         RMB   P2_0 |            | P2_5   LMB         DB9 6
+        DB9 5         MMB   P1_3 |            | RESET
+                mmb-in      P1_4 |            | P1_7   MOSI
+                      CLK   P1_5 |            | P1_6   MISO
+        DB9 9        !RMB   P2_0 |            | P2_5   LMB         DB9 6
 X2      DB9 4         QXA   P2_1 |            | P2_4   QYA         DB9 3 Y1
 X1      DB9 2         QXB   P2_2 |____________| P2_3   QYB         DB9 1 Y2
 
 mouse pinout DB9:
-     Y2  X1  Y1  X2  MMB
-      U   D   L   R  PotY
-   _______________________
-   \  1   2   3   4   5  /
-    \                   /
-     \__6___7___8___9_ /
-       LMB  +  gnd RMB
-                   PotX
-       
+     Y2  X1  Y1  X2  MMB     DB9   color   MCU
+      U   D   L   R  PotY      1   red     11
+   _______________________     2   blk     10
+   \  1   2   3   4   5  /     3   gry     12
+    \                   /      4   org      9
+     \__6___7___8___9_ /       5   brw      6
+       LMB  +  gnd RMB         6   grn    LMB -|<|- 13 = low VF diode
+                   PotX        7   wht     +5vcc 
+                               8   blu    GND
+                               9   ylw      8 to gate of MOSFET, RMB pulled down when high
 scroll wheel protocols:
 micomys: 20ms apart on MMB, 600 .. 650 us - six hundred  http://wiki.icomp.de/wiki/Micromys_Protocol
 
@@ -101,7 +101,7 @@ QXA QXB QYA QYB RMB
 
 #define  LASER_RANGE      LASER_10MA
 /* 0x00 -> 33.6%, 0xff -> 100%*/
-#define  LASER_POWER      0xB2
+#define  LASER_POWER      0xB5
 
 #define  REG_LASER_CTRL0  0x1a
 #define  REG_LASER_CTRL1  0x1f
@@ -124,7 +124,8 @@ QXA QXB QYA QYB RMB
 #define QRA P2_6
 #define QRB P2_7
 #define LMB P2_5
-#define MMB P1_4
+#define MMB P1_3
+#define MMB_IN P1_4
 #define RMB P2_0
 #define WHEEL_DELAY 5000
 
@@ -134,8 +135,6 @@ QXA QXB QYA QYB RMB
 #define QYA P2_3
 #define QYB P2_4
 
-//RED_LED
-#define RED_LED P1_0
 #define MMBUTT PUSH2
 
 // approx 5us instead of 13us
@@ -200,8 +199,6 @@ void setup() {
   // set the NCS as an output:
   pinMode(NCS, OUTPUT);
 
-  // configure RED LED for output
-  pinMode(RED_LED, OUTPUT);
   pinMode(MOTION_PIN, INPUT_PULLUP);
 
   // initialize SPI:
@@ -241,6 +238,8 @@ void setup() {
   // clear observation register
   set_reg(REG_OBSERVATION, 0x00);
 
+  pinMode(QXA, OUTPUT);
+
   // wait for at least one frame
   delayMicroseconds(250);
   // and check observation register, all bits 0-3 must be set
@@ -250,10 +249,10 @@ void setup() {
     if(!motion) {
       motion = 200;
       if(k) {
-        digitalWrite(RED_LED, HIGH);
+        digitalWrite(QXA, HIGH);
         k = 0;
       } else {
-        digitalWrite(RED_LED, LOW);
+        digitalWrite(QXA, LOW);
         k = 1;
       }
     }
@@ -283,7 +282,7 @@ void setup() {
   motion = 0;
 
   // quadrature outputs
-  pinMode(QXA, OUTPUT);
+//  pinMode(QXA, OUTPUT);
   pinMode(QXB, OUTPUT);
   pinMode(QYA, OUTPUT);
   pinMode(QYB, OUTPUT);
@@ -303,12 +302,15 @@ void setup() {
   pinMode(QRA, INPUT_PULLUP);
   pinMode(QRB, INPUT_PULLUP);
   pinMode(MMB, INPUT_PULLUP); // set it as output only when we need to pull it down
+  pinMode(MMB_IN, INPUT_PULLUP);
 
   pinMode(LMB, OUTPUT); // connected via diodes to corresponding pins in DB9
   pinMode(RMB, OUTPUT); // connected via diodes to corresponding pins in DB9
+//  pinMode(RMB, INPUT_PULLUP); // connected via diodes to corresponding pins in DB9
 
   digitalWrite(LMB, HIGH);
-  digitalWrite(RMB, HIGH);
+//  digitalWrite(RMB, HIGH);
+  digitalWrite(RMB, LOW);
 
 //  SW_state = (digitalRead(QRA) << 1) + digitalRead(QRB);
   SW_state = (P2IN >> 6) & 0x03;
@@ -319,20 +321,18 @@ void setup() {
   // set motion pin as interrupt input FALLING
   attachInterrupt(MOTION_PIN, set_motion, FALLING);
 
-  // setting up ADC on pin P1_3
-//  pinMode(MMBUTT, INPUT_PULLUP); // input from left mouse button switch
-  ADC10CTL1 = CONSEQ_2 | INCH_3 | ADC10DIV_7;            // Repeat single channel, A3
+  // setting up ADC on pin P1_0
+  ADC10CTL1 = CONSEQ_2 | INCH_0 | ADC10DIV_7;            // Repeat single channel, A3
   ADC10CTL0 = SREF_0 + ADC10SHT_2 + MSC + ADC10ON + ADC10IE; // Sample & Hold Time + ADC10 ON + Interrupt Enable
 
   ADC10DTC1 = 0x10;                 // 16 conversions
-  ADC10DTC0 |= ADC10CT;                 // continuous transfer
-  ADC10AE0 |= BIT3;                 // P1.3 ADC option select
+  ADC10DTC0 |= ADC10CT;             // continuous transfer
+  ADC10AE0 |= BIT0;                 // P1.0 ADC option select
 
-  ADC10CTL0 &= ~ENC;        // Disable Conversion
-  while (ADC10CTL1 & BUSY);   // Wait if ADC10 busy
-  ADC10SA = (int)adc;       // Transfers data to next array (DTC auto increments address)
-  ADC10CTL0 |= ENC + ADC10SC;   // Enable Conversion and conversion start
-
+  ADC10CTL0 &= ~ENC;                // Disable Conversion
+  while (ADC10CTL1 & BUSY);         // Wait if ADC10 busy
+  ADC10SA = (int)adc;               // Transfers data to next array (DTC auto increments address)
+  ADC10CTL0 |= ENC + ADC10SC;       // Enable Conversion and conversion start
 }
 
 unsigned int reg_val;
@@ -406,11 +406,6 @@ void loop() {
           (delta_x_raw == 0xFF)) {
         delay(2);
         motion_status = get_burst(false);
-#ifdef GPIO_OUT_SET_SUB
-        GPIO_OUT_CLR_SUB(1, 0);
-#else
-        digitalWrite(RED_LED, HIGH);
-#endif
     }
 
 #if DEBUG
@@ -436,12 +431,6 @@ void loop() {
     } else {
       delta_y += ((signed int)delta_y_raw - 0x1000);
     }
-
-#ifdef GPIO_OUT_SET_SUB
-    GPIO_OUT_CLR_SUB(1, 0);
-#else
-    digitalWrite(RED_LED, LOW);
-#endif
 
     if(motion)
       --motion;
@@ -552,14 +541,14 @@ void loop() {
 // 111 - 457 ... 459
 
 //       7654 3210
-//000 -> 0000 0000 
-//001 -> 0010 0000 
-//010 -> 0001 0000 
-//011 -> 0011 0000 
-//100 -> 0000 0010 
-//101 -> 0010 0010 
-//110 -> 0001 0010 
-//111 -> 0011 0010 
+//000 -> 0000 0000
+//001 -> 0010 0000
+//010 -> 0001 0000
+//011 -> 0011 0000
+//100 -> 0000 0010
+//101 -> 0010 0010
+//110 -> 0001 0010
+//111 -> 0011 0010
 
 //  buttons = 7;
   if(adc_avg > THR7) {
@@ -568,7 +557,7 @@ void loop() {
   } else {
     if(adc_avg > THR6) {
 //      buttons = 1; //0x20; //1;
-      button_state = BIT5;
+      button_state = BIT4;
     } else {
       if(adc_avg > THR5) {
 //        buttons = 2; //0x10; //2;
@@ -576,11 +565,11 @@ void loop() {
       } else {
         if(adc_avg > THR4) {
 //          buttons = 3; //0x30; //3;
-          button_state = BIT1 | BIT5;
+          button_state = BIT1 | BIT4;
         } else {
           if(adc_avg > THR3) {
 //            buttons = 4; //0x02; //4;
-            button_state = BIT4 | BIT1;
+            button_state = BIT5 | BIT1;
           } else {
             if(adc_avg > THR2) {
 //              buttons = 5; //0x22; //5;
@@ -588,7 +577,7 @@ void loop() {
             } else {
               if(adc_avg > THR1) {
 //                buttons = 6; //0x12; //6;
-                button_state = BIT4 | BIT1;
+                button_state = BIT5 | BIT1;
               } else {
 //                buttons = 7; //0x32; //7;
                 button_state = BIT4 | BIT1 | BIT5;
@@ -599,6 +588,16 @@ void loop() {
       }
     }
   }
+
+  if(button_state & BIT5) {
+    // do whatever should be done when top case button is pressed
+    // modify sensitivity
+    // flash LEDS to indicate, etc.
+  }
+
+  // ignore 
+  button_state &= ~BIT5;
+
 //  buttons ^= 0xff;
 //  buttons &= 0x32;
 //                      BIT4                     BIT1               BIT5
@@ -619,16 +618,11 @@ void loop() {
 
 void set_motion() {
   ++motion;
-#ifdef GPIO_OUT_SET_SUB
-  GPIO_OUT_SET_SUB(1, 0);
-#else
-  digitalWrite(RED_LED, HIGH);
-#endif
 }
 
 volatile byte quad_raw_out, test;
 
-//P2_0 RMB -> HIGH
+//P2_0 RMB -> inverse logic
 //P2_1 QXA
 //P2_2 QXB
 //P2_3 QYA
@@ -637,29 +631,30 @@ volatile byte quad_raw_out, test;
 
 void mmb_falling() {
 
-  quad_raw_out = P2OUT | BIT0 | BIT5;
+  quad_raw_out = P2OUT | BIT5;
 
   if(scroll_change != 0) {
 #ifdef COCOLINO
     if(scroll_change < 0) {
-      P2OUT =  BIT1 | BIT6 | BIT7 | (button_state & BIT5); //QXA
+//      P2OUT =  BIT1 | BIT6 | BIT7 | (button_state & BIT5); //QXA
+      P2OUT =  BIT0 | BIT1 | BIT6 | BIT7 | ((P1IN & BIT4) << 1); //QXA
       ++scroll_change;
     } else {
-      P2OUT = BIT6 | BIT7 | (button_state & BIT5); // RMB
+      P2OUT = BIT0 | BIT6 | BIT7 | ((P1IN & BIT4) << 1); // activate MOSFET on RMB
       --scroll_change;
     }
 #else // EZMOUSE
     //         RMB clear
     if(scroll_change < 0) {
-      P2OUT =  BIT1 | BIT5 | BIT6 | BIT7; // | ((buttons & BIT1)?BIT5:0); // QXA
+      P2OUT =  BIT0 | BIT1 | BIT5 | BIT6 | BIT7; // | ((buttons & BIT1)?BIT5:0); // QXA
       ++scroll_change;
     } else  {
-      P2OUT =  BIT4 | BIT5 | BIT6 | BIT7; // | ((buttons & BIT1)?BIT5:0); // QYB
+      P2OUT =  BIT0 | BIT4 | BIT5 | BIT6 | BIT7; // | ((buttons & BIT1)?BIT5:0); // QYB
       --scroll_change;
     }
 #endif
   } else {
-    P2OUT =  BIT0 | button_state | BIT6 | BIT7 | (quad_raw_out & (BIT2 | BIT3));
+    P2OUT =  button_state | BIT6 | BIT7 | (quad_raw_out & (BIT2 | BIT3)) | ((P1IN & BIT4) << 1);
 
     // middle button state MMB
 //  if(buttons & BIT0) // P1IN & BIT3) {
@@ -672,7 +667,7 @@ void mmb_falling() {
   // 5th QYB
 //  if(buttons & BIT2) //button_state_5th)
 //    P2OUT |= BIT4; // 5th
-}
+  }
 
 #ifdef COCOLINO
 
@@ -686,10 +681,9 @@ void mmb_falling() {
 
 //  while(!(P1IN & BIT4));
 
-//  pinMode(MMB, INPUT_PULLUP);
-  P2OUT = quad_raw_out;
+  // make sure to switch off MOSFET on RMB
+  P2OUT = quad_raw_out & ~BIT0;
 
   mmb_trigger = 1;
   mmb_activity = millis();
-//  ++motion;
 }
