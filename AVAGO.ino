@@ -4,6 +4,7 @@
  The circuit:
 
  // Default SPI pinout for MSP430G2553
+ either use 3V from ADNS and clock MSP with 12MHz or use 3v6 regulator and use default 16MHz
 // MISO P1.7
 // MOSI P1.6
 // CLK  P1.5
@@ -18,11 +19,12 @@
                 mmb-in      P1_4 |            | P1_7   MOSI
                       CLK   P1_5 |            | P1_6   MISO
         DB9 9        !RMB   P2_0 |            | P2_5   LMB         DB9 6
-X2      DB9 4         QXA   P2_1 |            | P2_4   QYA         DB9 3 Y1
-X1      DB9 2         QXB   P2_2 |____________| P2_3   QYB         DB9 1 Y2
+   XQ   DB9 4         QXA   P2_1 |            | P2_4   QYA         DB9 3 YQ
+    X   DB9 2         QXB   P2_2 |____________| P2_3   QYB         DB9 1  Y
 
 mouse pinout DB9:
-     Y2  X1  Y1  X2  MMB     DB9   color   MCU
+     QYB QXB QYA QXA
+      Y   X  YQ  XQ  MMB     DB9   color   MCU
       U   D   L   R  PotY      1   red     11
    _______________________     2   blk     10
    \  1   2   3   4   5  /     3   gry     12
@@ -32,40 +34,30 @@ mouse pinout DB9:
                    PotX        7   wht     +5vcc 
                                8   blu    GND
                                9   ylw      8 to gate of MOSFET, RMB pulled down when high
-scroll wheel protocols:
-micomys: 20ms apart on MMB, 600 .. 650 us - six hundred  http://wiki.icomp.de/wiki/Micromys_Protocol
-
-cocolino: 20ms apart on MMB, 64 .. 70 us - sixty eight, 99.7% PWM
-================== CocolinoTest ==================
-FOURTH DOWN - QXA - X2 pin 4
-FIVETH DOWN - QYA - Y1 pin 3
-
-QXA QXB QYA QYB RMB
-  0   0   0   0   0   wheel up
-  1   0   0   0   0   wheel down
-  0   1   1   1   1   FOURTH down
-  1   1   1   0   1   FIVETH up  
-
-==================
-mm https://github.com/paulroberthill/AmigaPS2Mouse
-26us ... 32us
-WiP
-==================
-EZ Mouse
-
-Wheel up    right
-Wheel down  left
-
-QXA QXB QYA QYB RMB
-  0   1   0   0   0   wheel up
-  0   0   0   1   0   wheel down
 
 */
 
 //#define DEBUG 1
 
 // wheel protocol used (use appropriate driver on host)
-#define COCOLINO
+//#define DRIVER_COCOLINO
+//#define DRIVER_EZMOUSE
+#define DRIVER_BLABBER
+
+#ifdef DRIVER_COCOLINO
+  // total time of MMB low: 64...65us
+  // excluding ISR reaction: 32us ... 33 (45us) 
+#define USE_FIXED_DELAY 47
+#endif
+#ifdef DRIVER_EZMOUSE
+#define USE_FIXED_DELAY 30
+#endif
+#ifdef DRIVER_BLABBER
+// 25 lines in VBR interrupt routine corresponds to approx 50us pulse
+// IRQ reacts approx 18..20us after falling edge
+//#define USE_FIXED_DELAY 28
+#define USE_FIXED_DELAY 42
+#endif
 
 #define  REG_PRODUCT_ID       0x00
 #define  REG_INV_PRODUCT_ID   0x3E
@@ -150,9 +142,10 @@ signed delta_x, delta_y;
 
 volatile unsigned char SW_state;
 volatile signed int scroll_change = 0;
-volatile byte mmb_trigger; //, buttons;
+volatile unsigned int mmb_trigger;
+bool mmb_attached_irq;
 int adc[16] = {0}; //Sets up an array of 16 integers and zero's the values
-volatile unsigned long mmb_activity;
+int max_adc, min_adc;
 
 void set_reg(int address, int value) {
   // take the SS pin low to select the chip:
@@ -317,6 +310,7 @@ void setup() {
 
   mmb_trigger = 0;
   attachInterrupt(MMB, mmb_falling, FALLING);
+  mmb_attached_irq = 1;
 
   // set motion pin as interrupt input FALLING
   attachInterrupt(MOTION_PIN, set_motion, FALLING);
@@ -350,7 +344,7 @@ unsigned int delta_x_raw, delta_y_raw, delta_xy_raw;
 const unsigned int quad_state[] = { 0, 1, 3, 2 };
 unsigned char output_sweep = 0;
 unsigned long last_update;
-volatile byte button_state;
+volatile byte button_state, prev_button_state, button_update;
 unsigned int motion_status;
 
 unsigned int get_burst(bool get_all = true) {
@@ -384,11 +378,15 @@ unsigned int get_burst(bool get_all = true) {
   return value;
 }
 
-void loop() {
-  if((motion) || (mmb_trigger && ((millis() - last_update) > 100))) {
+//volatile byte fake_code;
+unsigned long mmb_last_trigger;
+volatile byte mmb_prev_state;
 
-    last_update = millis();
-    mmb_trigger = 0;
+void loop() {
+  if((motion) || (mmb_trigger > 16)) {
+
+    if(mmb_trigger > 16)
+      mmb_trigger = 1;
 
 #if 0
 //    get_reg(REG_OBSERVATION); // 0x2e
@@ -436,10 +434,14 @@ void loop() {
       --motion;
 
     if(motion_status & REG_MOTION_MOT) {
-      if(delta_x != 0)
-        change_period_x = constrain(100 / (1 + abs(delta_x)), 1, 35);
-      if(delta_y != 0)
-        change_period_y = constrain(100 / (1 + abs(delta_y)), 1, 35);
+      if(delta_x > 1)
+        change_period_x = constrain(133 / (abs(delta_x)), 1, 45);
+      else
+        change_period_x = 1;
+      if(delta_y > 1)
+        change_period_y = constrain(133 / (abs(delta_y)), 1, 45);
+      else
+        change_period_y = 1;
       change_period_lapsed_x = 0;
       change_period_lapsed_y = 0;
     }
@@ -468,6 +470,7 @@ void loop() {
       case 0xE:
       case 0x8:
         ++scroll_change;
+//        ++fake_code;
       break;
       // 0100, 1101, 1011, 0010
       case 0x4:
@@ -475,11 +478,14 @@ void loop() {
       case 0xB:
       case 0x2:
         --scroll_change;
+//        --fake_code;
       break;
       default:
       // 0000, 0101, 1111, 1010 -> no change
+      // 0011, 0110, 0110, 1100 -> invalid transitions
       break;
     }
+//    fake_code &= 0x3F;
   }
 
   if((delta_x != 0) && (!change_period_lapsed_x)) {
@@ -524,6 +530,13 @@ void loop() {
 
   adc_avg = 1024 - ((adc[0]+adc[1]+adc[2]+adc[3]+adc[4]+adc[5]+adc[6]+adc[7]+adc[8]+adc[9]+adc[10]+adc[11]+adc[12]+adc[13]+adc[14]+adc[15]) / 16);
 
+  max_adc = 0; min_adc = 1023;
+  for(k = 0; k < 10; ++k) {
+    max_adc = max(max_adc, adc[k]);
+    min_adc = min(min_adc, adc[k]);
+  }
+
+  if((max_adc - min_adc) < 10) {
 // 000 - 0
 #define THR1 55
 // 001 - 109 ... 113
@@ -540,6 +553,21 @@ void loop() {
 #define THR7 439
 // 111 - 457 ... 459
 
+// 000 - 0
+// 001 - 109 ... 113  -> 4
+//           66
+// 010 - 179 ... 183  -> 4
+//           74
+// 011 - 257 ... 267  -> 10
+//           61
+// 100 - 328 ... 331  -> 3
+//           49
+// 101 - 380 ... 383  -> 3
+//           32
+// 110 - 415 ... 420  -> 5
+//           37
+// 111 - 457 ... 459  -> 2
+
 //       7654 3210
 //000 -> 0000 0000
 //001 -> 0010 0000
@@ -550,59 +578,51 @@ void loop() {
 //110 -> 0001 0010
 //111 -> 0011 0010
 
-//  buttons = 7;
-  if(adc_avg > THR7) {
-//    buttons = 0; //0;
+    button_state &= 0x1f;
+    prev_button_state = button_state;
     button_state = 0;
-  } else {
-    if(adc_avg > THR6) {
-//      buttons = 1; //0x20; //1;
-      button_state = BIT4;
-    } else {
-      if(adc_avg > THR5) {
-//        buttons = 2; //0x10; //2;
-        button_state = BIT1;
+    if(adc_avg > THR4) {
+      button_state |= BIT2;
+      if(adc_avg > THR6) {
+        button_state |= BIT1;
+        if(adc_avg > THR7)
+          button_state |= BIT0;
       } else {
-        if(adc_avg > THR4) {
-//          buttons = 3; //0x30; //3;
-          button_state = BIT1 | BIT4;
-        } else {
-          if(adc_avg > THR3) {
-//            buttons = 4; //0x02; //4;
-            button_state = BIT5 | BIT1;
-          } else {
-            if(adc_avg > THR2) {
-//              buttons = 5; //0x22; //5;
-              button_state = BIT4 | BIT5;
-            } else {
-              if(adc_avg > THR1) {
-//                buttons = 6; //0x12; //6;
-                button_state = BIT5 | BIT1;
-              } else {
-//                buttons = 7; //0x32; //7;
-                button_state = BIT4 | BIT1 | BIT5;
-              }
-            }
-          }
-        }
+        if(adc_avg > THR5)
+          button_state |= BIT0;
+      }
+    } else {
+      if(adc_avg > THR2) {
+        button_state |= BIT1;
+        if(adc_avg > THR3)
+          button_state |= BIT0;
+      } else {
+        if(adc_avg > THR1)
+          button_state |= BIT0;
       }
     }
-  }
 
-  if(button_state & BIT5) {
-    // do whatever should be done when top case button is pressed
-    // modify sensitivity
-    // flash LEDS to indicate, etc.
-  }
+    button_state &= ~BIT4;
+    button_state |= (P1IN & BIT4);
+
+    if(prev_button_state ^ button_state) {
+      button_update |= prev_button_state ^ button_state;
+    }
+    if(button_state & BIT5) {
+      // do whatever should be done when top case button is pressed
+      // modify sensitivity
+      // flash LEDS to indicate, etc.
+    }
 
   // ignore 
-  button_state &= ~BIT5;
+//  button_state &= ~BIT5;
 
 //  buttons ^= 0xff;
 //  buttons &= 0x32;
 //                      BIT4                     BIT1               BIT5
 //  button_state = ((buttons & BIT2) << 2) | (buttons & BIT1) | ((buttons & BIT0) << 5);
 
+  }
 /*
   // detect MMB press -> if no activity on MMB line from mouse driver - use pin to simulate real button
   if((!(button_state & BIT5)) && ((millis() - mmb_activity) > 100)) {
@@ -614,6 +634,34 @@ void loop() {
     attachInterrupt(MMB, mmb_falling, FALLING);
   }
 */
+
+//  if(button_state & BIT0) {
+//    ++fake_code;
+//    fake_code &= 0x3F;
+//  }
+//  if(button_state & BIT1) {
+//    --fake_code;
+//    fake_code &= 0x3F;
+//  }
+
+/*/  if(!mmb_trigger && ((millis() - mmb_last_trigger) > 100) && (mmb_prev_state ^ (P1IN & BIT4))) {
+  if(mmb_prev_state ^ (P1IN & BIT4)) {
+    mmb_prev_state = (P1IN & BIT4);
+    if(P1IN & BIT4) {
+      if(!mmb_attached_irq) {
+        pinMode(MMB, INPUT_PULLUP); // set it as output only when we need to pull it down
+        attachInterrupt(MMB, mmb_falling, FALLING);
+        mmb_attached_irq = 1;
+      }
+    } else {
+      if(mmb_attached_irq) {
+        detachInterrupt(MMB);
+        pinMode(MMB, OUTPUT); // set it as output only when we need to pull it down
+        digitalWrite(MMB, LOW);
+      }
+      mmb_attached_irq = 0;
+    }
+  }*/
 }
 
 void set_motion() {
@@ -621,20 +669,29 @@ void set_motion() {
 }
 
 volatile byte quad_raw_out, test;
+volatile byte button_update_cnt[3];
 
 //P2_0 RMB -> inverse logic
-//P2_1 QXA
-//P2_2 QXB
-//P2_3 QYA
-//P2_4 QYB
+//P2_1 QXA XQ
+//P2_2 QXB  X
+//P2_3 QYA YQ
+//P2_4 QYB  Y
 //P2_5 LMB -> HIGH
+
+//QXA QXB QYA QYB RMB
+//  1   1   1   1   0   idle
+//  0   x   x   x   0   MMB down
+//  x   0   1   0   0   wheel up
+//  x   1   0   0   0   wheel down
+//  x   0   0   0   0   4th
+//  x   0   0   1   0   5th
 
 void mmb_falling() {
 
   quad_raw_out = P2OUT | BIT5;
 
+#ifdef DRIVER_COCOLINO
   if(scroll_change != 0) {
-#ifdef COCOLINO
     if(scroll_change < 0) {
 //      P2OUT =  BIT1 | BIT6 | BIT7 | (button_state & BIT5); //QXA
       P2OUT =  BIT0 | BIT1 | BIT6 | BIT7 | ((P1IN & BIT4) << 1); //QXA
@@ -643,47 +700,100 @@ void mmb_falling() {
       P2OUT = BIT0 | BIT6 | BIT7 | ((P1IN & BIT4) << 1); // activate MOSFET on RMB
       --scroll_change;
     }
-#else // EZMOUSE
-    //         RMB clear
-    if(scroll_change < 0) {
-      P2OUT =  BIT0 | BIT1 | BIT5 | BIT6 | BIT7; // | ((buttons & BIT1)?BIT5:0); // QXA
+  } else {
+//    P2OUT =  button_state | BIT6 | BIT7 | (quad_raw_out & (BIT2 | BIT3)) | ((P1IN & BIT4) << 1);
+    P2OUT =  ((button_state & BIT0) << 1) | ((button_state & BIT1) << 3) | BIT6 | BIT7 | (quad_raw_out & (BIT2 | BIT3)) | ((P1IN & BIT4) << 1);
+  }
+#endif // COCOLINO
+
+#ifdef DRIVER_EZMOUSE
+  if(scroll_change != 0) {
+    // RMB clear, LMB unchanged
+    if(scroll_change < 0) {               // QXB
+      P2OUT =  ((P1IN & BIT4) >> 3) | BIT0 | BIT2 | BIT5; // QXB
       ++scroll_change;
-    } else  {
-      P2OUT =  BIT0 | BIT4 | BIT5 | BIT6 | BIT7; // | ((buttons & BIT1)?BIT5:0); // QYB
+    } else  {                             // QYA
+      P2OUT =  ((P1IN & BIT4) >> 3) | BIT0 | BIT3 | BIT5; // QYA
       --scroll_change;
     }
-#endif
   } else {
-    P2OUT =  button_state | BIT6 | BIT7 | (quad_raw_out & (BIT2 | BIT3)) | ((P1IN & BIT4) << 1);
-
-    // middle button state MMB
-//  if(buttons & BIT0) // P1IN & BIT3) {
-//    P2OUT |= BIT5; // LMB
-
-  // 4th QXA
-//  if(buttons & BIT1) //button_state_4th)
-//    P2OUT |= BIT1; // 4th
-
-  // 5th QYB
-//  if(buttons & BIT2) //button_state_5th)
-//    P2OUT |= BIT4; // 5th
+    P2OUT =  BIT0 | BIT6 | BIT7 | (quad_raw_out & (BIT2 | BIT3)) | ((P1IN & BIT4) << 1);
   }
+#endif // EZMOUSE
 
-#ifdef COCOLINO
-
-  // total time of MMB low: 64...65us
-  // excluding ISR reaction: 32us ... 33 (45us) 
-
-  delayMicroseconds(47);
-#else // EZMOUSE
-  delayMicroseconds(30);
+#ifdef DRIVER_BLABBER
+  if(scroll_change != 0) {
+    if(scroll_change < 0) {
+      P2OUT = BIT1 | BIT5;        //  0x0200
+      ++scroll_change;
+    } else  {
+      P2OUT = BIT1 | BIT2 | BIT5; //  0x0201
+      --scroll_change;
+    }
+  } else {
+    if((button_update & BIT4) || (mmb_prev_state ^ (P1IN & BIT4))) {
+//    if(button_update & BIT4) {
+      if((P1IN & BIT4)) {
+//      if(button_state & BIT4) {
+        P2OUT = BIT1 |        BIT3 | BIT4 | BIT5; // 0x0000 mmb down
+        mmb_prev_state = BIT4 ;//(P1IN & BIT4);
+        button_update_cnt[2] = 2; //(P1IN & BIT4)?2:10;
+      } else {
+        P2OUT = BIT1 | BIT2 | BIT3 | BIT4 | BIT5; // 0x0001 mmb up
+        mmb_prev_state = 0; //(P1IN & BIT4);
+        button_update_cnt[2] = 10; //(P1IN & BIT4)?2:10;
+      }
+      button_update &= ~BIT4;
+    } else {
+      if(button_update & BIT1) {
+        // 4th - left side button
+        if(button_state & BIT1)
+          P2OUT = BIT3 | BIT4 | BIT5;  // 0x0002 4th down
+        else
+          P2OUT = BIT2 | BIT3 | BIT4 | BIT5; // 0x0003
+        button_update &= ~BIT1;
+        button_update_cnt[1] = 100; //(button_state & BIT1)?1:50;
+      } else {
+        if(button_update & BIT0) {
+          // 5th button - right side button
+          if(button_state & BIT0)
+            P2OUT = BIT1 | BIT2 | BIT4 | BIT5; // 0x0100
+          else
+            P2OUT =        BIT1 | BIT4 | BIT5; // 0x0101
+          button_update &= ~BIT0;
+          button_update_cnt[0] = 100; // (button_state & BIT0)?1:50;
+        } else {
+          P2OUT = BIT5;
+        }
+      }
+    }
+  }
 #endif
 
-//  while(!(P1IN & BIT4));
+#ifdef USE_FIXED_DELAY
+  delayMicroseconds(USE_FIXED_DELAY);
+#else // USE_FIXED_DELAY
+  // delay after rising edge is approx 2us
+  while(!(P1IN & BIT3));
+#endif
 
   // make sure to switch off MOSFET on RMB
   P2OUT = quad_raw_out & ~BIT0;
 
-  mmb_trigger = 1;
-  mmb_activity = millis();
+  ++mmb_trigger;
+  mmb_last_trigger = millis();
+
+  --button_update_cnt[0];
+  --button_update_cnt[1];
+  --button_update_cnt[2];
+
+  if(!button_update_cnt[0])
+    button_update |= BIT0;
+
+  if(!button_update_cnt[1])
+    button_update |= BIT1;
+
+  if(!button_update_cnt[2])
+    button_update |= BIT4;
+//    mmb_prev_state ^= BIT4;
 }
