@@ -724,10 +724,10 @@ void mmb_falling() {
 #ifdef DRIVER_BLABBER
   if(scroll_change != 0) {
     if(scroll_change < 0) {
-      P2OUT = BIT1 | BIT5;        //  0x0200
+      P2OUT = (quad_raw_out ^ (BIT1 | ((button_state & BIT2) << 1))) | BIT5;        //  0x0200
       ++scroll_change;
     } else  {
-      P2OUT = BIT1 | BIT2 | BIT5; //  0x0201
+      P2OUT = (quad_raw_out ^ (BIT1 | BIT2 | ((button_state & BIT2) << 1))) | BIT5; //  0x0201
       --scroll_change;
     }
   } else {
@@ -735,11 +735,11 @@ void mmb_falling() {
 //    if(button_update & BIT4) {
       if((P1IN & BIT4)) {
 //      if(button_state & BIT4) {
-        P2OUT = BIT1 |        BIT3 | BIT4 | BIT5; // 0x0000 mmb down
+        P2OUT = (quad_raw_out ^ (BIT1 |        BIT3 | BIT4)) | BIT5; // 0x0000 mmb down
         mmb_prev_state = BIT4 ;//(P1IN & BIT4);
         button_update_cnt[2] = 2; //(P1IN & BIT4)?2:10;
       } else {
-        P2OUT = BIT1 | BIT2 | BIT3 | BIT4 | BIT5; // 0x0001 mmb up
+        P2OUT = (quad_raw_out ^ (BIT1 | BIT2 | BIT3 | BIT4)) | BIT5; // 0x0001 mmb up
         mmb_prev_state = 0; //(P1IN & BIT4);
         button_update_cnt[2] = 10; //(P1IN & BIT4)?2:10;
       }
@@ -748,22 +748,22 @@ void mmb_falling() {
       if(button_update & BIT1) {
         // 4th - left side button
         if(button_state & BIT1)
-          P2OUT = BIT3 | BIT4 | BIT5;  // 0x0002 4th down
+          P2OUT = (quad_raw_out ^ (BIT3 | BIT4)) | BIT5;  // 0x0002 4th down
         else
-          P2OUT = BIT2 | BIT3 | BIT4 | BIT5; // 0x0003
+          P2OUT = (quad_raw_out ^ (BIT2 | BIT3 | BIT4)) | BIT5; // 0x0003
         button_update &= ~BIT1;
         button_update_cnt[1] = 100; //(button_state & BIT1)?1:50;
       } else {
         if(button_update & BIT0) {
           // 5th button - right side button
           if(button_state & BIT0)
-            P2OUT = BIT1 | BIT2 | BIT4 | BIT5; // 0x0100
+            P2OUT = (quad_raw_out ^ (BIT1 | BIT2 | BIT4)) | BIT5; // 0x0100
           else
-            P2OUT =        BIT1 | BIT4 | BIT5; // 0x0101
+            P2OUT = (quad_raw_out ^ (BIT1 | BIT4)) | BIT5; // 0x0101
           button_update &= ~BIT0;
           button_update_cnt[0] = 100; // (button_state & BIT0)?1:50;
         } else {
-          P2OUT = BIT5;
+          //P2OUT = quad_raw_out | BIT5;
         }
       }
     }
@@ -783,9 +783,9 @@ void mmb_falling() {
   ++mmb_trigger;
   mmb_last_trigger = millis();
 
-  --button_update_cnt[0];
-  --button_update_cnt[1];
-  --button_update_cnt[2];
+//  --button_update_cnt[0];
+//  --button_update_cnt[1];
+//  --button_update_cnt[2];
 
   if(!button_update_cnt[0])
     button_update |= BIT0;
