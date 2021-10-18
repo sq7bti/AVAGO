@@ -56,7 +56,7 @@ mouse pinout DB9:
 // 25 lines in VBR interrupt routine corresponds to approx 50us pulse
 // IRQ reacts approx 18..20us after falling edge
 //#define USE_FIXED_DELAY 28
-#define USE_FIXED_DELAY 42
+#define USE_FIXED_DELAY 40
 #endif
 
 #define  REG_PRODUCT_ID       0x00
@@ -669,7 +669,6 @@ void set_motion() {
 }
 
 volatile byte quad_raw_out, test;
-volatile byte button_update_cnt[3];
 
 //P2_0 RMB -> inverse logic
 //P2_1 QXA XQ
@@ -686,6 +685,14 @@ volatile byte button_update_cnt[3];
 //  x   0   0   0   0   4th
 //  x   0   0   1   0   5th
 
+volatile byte code_send;
+#define CODE_IDLE 0
+#define CODE_WHEEL_UP 1
+#define CODE_WHEEL_DOWN 2
+#define CODE_MMB_CHANGE 3
+#define CODE_4TH_CHANGE 4
+#define CODE_5TH_CHANGE 5
+
 void mmb_falling() {
 
   quad_raw_out = P2OUT | BIT5;
@@ -693,15 +700,13 @@ void mmb_falling() {
 #ifdef DRIVER_COCOLINO
   if(scroll_change != 0) {
     if(scroll_change < 0) {
-//      P2OUT =  BIT1 | BIT6 | BIT7 | (button_state & BIT5); //QXA
       P2OUT =  BIT0 | BIT1 | BIT6 | BIT7 | ((P1IN & BIT4) << 1); //QXA
       ++scroll_change;
     } else {
-      P2OUT = BIT0 | BIT6 | BIT7 | ((P1IN & BIT4) << 1); // activate MOSFET on RMB
+      P2OUT = BIT0 |         BIT6 | BIT7 | ((P1IN & BIT4) << 1); // activate MOSFET on RMB
       --scroll_change;
     }
-  } else {
-//    P2OUT =  button_state | BIT6 | BIT7 | (quad_raw_out & (BIT2 | BIT3)) | ((P1IN & BIT4) << 1);
+  } else { // 5th BIT1 -> QXA -> XQ pin 4   4th BIT4 -> QYB -> Y pin 3                                                    MMB BIT5 LMB pin 6
     P2OUT =  ((button_state & BIT0) << 1) | ((button_state & BIT1) << 3) | BIT6 | BIT7 | (quad_raw_out & (BIT2 | BIT3)) | ((P1IN & BIT4) << 1);
   }
 #endif // COCOLINO
@@ -709,15 +714,17 @@ void mmb_falling() {
 #ifdef DRIVER_EZMOUSE
   if(scroll_change != 0) {
     // RMB clear, LMB unchanged
-    if(scroll_change < 0) {               // QXB
-      P2OUT =  ((P1IN & BIT4) >> 3) | BIT0 | BIT2 | BIT5; // QXB
+    if(scroll_change < 0) {
+      //             MMB -> BIT1 -> QXB
+      P2OUT = BIT0 | ((P1IN & BIT4) >> 3) | BIT2 |        BIT5; // QXB
       ++scroll_change;
-    } else  {                             // QYA
-      P2OUT =  ((P1IN & BIT4) >> 3) | BIT0 | BIT3 | BIT5; // QYA
+    } else  {
+      //             MMB -> BIT1 -> QYA
+      P2OUT = BIT0 | ((P1IN & BIT4) >> 3) |        BIT3 | BIT5; // QYA
       --scroll_change;
     }
-  } else {
-    P2OUT =  BIT0 | BIT6 | BIT7 | (quad_raw_out & (BIT2 | BIT3)) | ((P1IN & BIT4) << 1);
+  } else { //                                        MMB -> BIT3?
+    P2OUT =  BIT0 | (quad_raw_out & (BIT2 | BIT3)) | ((P1IN & BIT4) << 1) | BIT6 | BIT7;
   }
 #endif // EZMOUSE
 
@@ -725,50 +732,46 @@ void mmb_falling() {
   if(scroll_change != 0) {
     if(scroll_change < 0) {
       P2OUT = (quad_raw_out ^ (BIT1 | ((button_state & BIT2) << 1))) | BIT5;        //  0x0200
-      ++scroll_change;
+//      ++scroll_change;
+      code_send = CODE_WHEEL_DOWN;
     } else  {
       P2OUT = (quad_raw_out ^ (BIT1 | BIT2 | ((button_state & BIT2) << 1))) | BIT5; //  0x0201
-      --scroll_change;
+//      --scroll_change;
+      code_send = CODE_WHEEL_UP;
     }
   } else {
     if((button_update & BIT4) || (mmb_prev_state ^ (P1IN & BIT4))) {
-//    if(button_update & BIT4) {
       if((P1IN & BIT4)) {
-//      if(button_state & BIT4) {
         P2OUT = (quad_raw_out ^ (BIT1 |        BIT3 | BIT4)) | BIT5; // 0x0000 mmb down
         mmb_prev_state = BIT4 ;//(P1IN & BIT4);
-        button_update_cnt[2] = 2; //(P1IN & BIT4)?2:10;
       } else {
         P2OUT = (quad_raw_out ^ (BIT1 | BIT2 | BIT3 | BIT4)) | BIT5; // 0x0001 mmb up
         mmb_prev_state = 0; //(P1IN & BIT4);
-        button_update_cnt[2] = 10; //(P1IN & BIT4)?2:10;
       }
-      button_update &= ~BIT4;
+      code_send = CODE_MMB_CHANGE;
     } else {
       if(button_update & BIT1) {
         // 4th - left side button
         if(button_state & BIT1)
-          P2OUT = (quad_raw_out ^ (BIT3 | BIT4)) | BIT5;  // 0x0002 4th down
+          P2OUT = (quad_raw_out ^ (BIT3 |               BIT4)) | BIT5;  // 0x0002 4th down
         else
-          P2OUT = (quad_raw_out ^ (BIT2 | BIT3 | BIT4)) | BIT5; // 0x0003
-        button_update &= ~BIT1;
-        button_update_cnt[1] = 100; //(button_state & BIT1)?1:50;
+          P2OUT = (quad_raw_out ^ (BIT2 |        BIT3 | BIT4)) | BIT5; // 0x0003
+        code_send = CODE_4TH_CHANGE;
       } else {
         if(button_update & BIT0) {
           // 5th button - right side button
           if(button_state & BIT0)
-            P2OUT = (quad_raw_out ^ (BIT1 | BIT2 | BIT4)) | BIT5; // 0x0100
+            P2OUT = (quad_raw_out ^ (BIT1 | BIT2 |        BIT4)) | BIT5; // 0x0100
           else
-            P2OUT = (quad_raw_out ^ (BIT1 | BIT4)) | BIT5; // 0x0101
-          button_update &= ~BIT0;
-          button_update_cnt[0] = 100; // (button_state & BIT0)?1:50;
-        } else {
+            P2OUT = (quad_raw_out ^ (BIT1 |               BIT4)) | BIT5; // 0x0101
+          code_send = CODE_5TH_CHANGE;
+//        } else {
           //P2OUT = quad_raw_out | BIT5;
         }
       }
     }
   }
-#endif
+#endif // BLABBER
 
 #ifdef USE_FIXED_DELAY
   delayMicroseconds(USE_FIXED_DELAY);
@@ -783,17 +786,25 @@ void mmb_falling() {
   ++mmb_trigger;
   mmb_last_trigger = millis();
 
-//  --button_update_cnt[0];
-//  --button_update_cnt[1];
-//  --button_update_cnt[2];
-
-  if(!button_update_cnt[0])
-    button_update |= BIT0;
-
-  if(!button_update_cnt[1])
-    button_update |= BIT1;
-
-  if(!button_update_cnt[2])
-    button_update |= BIT4;
-//    mmb_prev_state ^= BIT4;
+  if(!(P1IN & BIT3)) {
+    switch(code_send)  {
+      case CODE_WHEEL_UP:
+          if(scroll_change)
+            --scroll_change;
+          break;
+      case CODE_WHEEL_DOWN:
+          if(scroll_change)
+            ++scroll_change;
+          break;
+      case CODE_MMB_CHANGE:
+          button_update &= ~BIT4;
+          break;
+      case CODE_4TH_CHANGE:
+          button_update &= ~BIT1;
+          break;
+      case CODE_5TH_CHANGE:
+          button_update &= ~BIT0;
+          break;
+    }
+  }
 }
