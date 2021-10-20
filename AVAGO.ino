@@ -383,11 +383,13 @@ unsigned long mmb_last_trigger;
 volatile byte mmb_prev_state;
 
 void loop() {
-  if((motion) || (mmb_trigger > 16)) {
+  if((motion) || ((mmb_trigger > 256) && ((millis() - mmb_last_trigger) > 10))) {
 
     if(mmb_trigger > 16)
       mmb_trigger = 1;
 
+    if(motion)
+      mmb_last_trigger = millis();
 #if 0
 //    get_reg(REG_OBSERVATION); // 0x2e
 //    reg_val = get_reg(REG_MOTION); // 0x02
@@ -729,14 +731,13 @@ void mmb_falling() {
 #endif // EZMOUSE
 
 #ifdef DRIVER_BLABBER
+  code_send = CODE_IDLE;
   if(scroll_change != 0) {
     if(scroll_change < 0) {
       P2OUT = (quad_raw_out ^ (BIT1 | ((button_state & BIT2) << 1))) | BIT5;        //  0x0200
-//      ++scroll_change;
       code_send = CODE_WHEEL_DOWN;
     } else  {
       P2OUT = (quad_raw_out ^ (BIT1 | BIT2 | ((button_state & BIT2) << 1))) | BIT5; //  0x0201
-//      --scroll_change;
       code_send = CODE_WHEEL_UP;
     }
   } else {
@@ -773,12 +774,8 @@ void mmb_falling() {
   }
 #endif // BLABBER
 
-#ifdef USE_FIXED_DELAY
+  // with code confirmation we must not wait for falling edge
   delayMicroseconds(USE_FIXED_DELAY);
-#else // USE_FIXED_DELAY
-  // delay after rising edge is approx 2us
-  while(!(P1IN & BIT3));
-#endif
 
   // make sure to switch off MOSFET on RMB
   P2OUT = quad_raw_out & ~BIT0;
@@ -789,12 +786,10 @@ void mmb_falling() {
   if(!(P1IN & BIT3)) {
     switch(code_send)  {
       case CODE_WHEEL_UP:
-          if(scroll_change)
-            --scroll_change;
+          --scroll_change;
           break;
       case CODE_WHEEL_DOWN:
-          if(scroll_change)
-            ++scroll_change;
+          ++scroll_change;
           break;
       case CODE_MMB_CHANGE:
           button_update &= ~BIT4;
