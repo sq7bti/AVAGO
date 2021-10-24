@@ -136,9 +136,11 @@ mouse pinout DB9:
 #define MHZ 12
 #define SET_CPU_CLOCK(mhz) { DCOCTL = CALDCO_##mhz##MHZ; BCSCTL1 = CALBC1_##mhz##MHZ; };
 
+const unsigned int quad_state[] = { 0, 1, 3, 2 };
 unsigned int motion = 200, k = 0, adc_avg;
 unsigned int quad_x, quad_y, t;
 signed delta_x, delta_y;
+unsigned int sensor_resolution;
 
 volatile unsigned char SW_state;
 volatile signed int scroll_change = 0;
@@ -223,7 +225,8 @@ void setup() {
   set_reg(REG_LSRPWR_CFG1, ~LASER_POWER); // 0x1d (0x9d)
 
 /* CONFIG2_400CPI, CONFIG2_800CPI, CONFIG2_1200CPI, CONFIG2_1600CPI */
-  set_reg(REG_CONFIGURATION2, CONFIG2_400CPI); //   0x12 (0x92)
+  sensor_resolution = 0;
+  set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
 
   // wait for at least one frame ?
   delayMicroseconds(250);
@@ -231,24 +234,53 @@ void setup() {
   // clear observation register
   set_reg(REG_OBSERVATION, 0x00);
 
+  // quadrature outputs
   pinMode(QXA, OUTPUT);
+  pinMode(QXB, OUTPUT);
+  pinMode(QYA, OUTPUT);
+  pinMode(QYB, OUTPUT);
+
+  digitalWrite(QXA, LOW);
+  digitalWrite(QXB, LOW);
+  digitalWrite(QYA, LOW);
+  digitalWrite(QYB, LOW);
+  
+  quad_x = 0;
+  quad_y = 0;
 
   // wait for at least one frame
   delayMicroseconds(250);
   // and check observation register, all bits 0-3 must be set
   while((get_reg(REG_OBSERVATION) & 0x0F) != 0x0F) {
-    delayMicroseconds(500);
-    --motion;
-    if(!motion) {
-      motion = 200;
-      if(k) {
-        digitalWrite(QXA, HIGH);
-        k = 0;
+    delayMicroseconds(5000);
+    ++motion;
+    if(motion > 40) {
+      motion = 0;
+    } else {
+      if(motion > 30) {
+        ++quad_x;
+        --quad_y;
       } else {
-        digitalWrite(QXA, LOW);
-        k = 1;
+        if(motion > 20) {
+          --quad_x;
+          --quad_y;
+        } else {
+          if(motion > 10) {
+            --quad_x;
+            ++quad_y;
+          } else {
+            ++quad_x;
+            ++quad_y;
+          }
+        }
       }
     }
+    quad_x &= 0x03;
+    (quad_state[quad_x] & 0x01)?GPIO_OUT_SET_SUB(2, 1):GPIO_OUT_CLR_SUB(2, 1);
+    (quad_state[quad_x] & 0x02)?GPIO_OUT_SET_SUB(2, 2):GPIO_OUT_CLR_SUB(2, 2);
+    quad_y &= 0x03;
+    (quad_state[quad_y] & 0x01)?GPIO_OUT_SET_SUB(2, 3):GPIO_OUT_CLR_SUB(2, 3);
+    (quad_state[quad_y] & 0x02)?GPIO_OUT_SET_SUB(2, 4):GPIO_OUT_CLR_SUB(2, 4);
   }
 
   get_reg(REG_MOTION);                     // read from registers one time regardless of the motion pin state 0x02
@@ -273,20 +305,6 @@ void setup() {
   delayMicroseconds(100);
 
   motion = 0;
-
-  // quadrature outputs
-//  pinMode(QXA, OUTPUT);
-  pinMode(QXB, OUTPUT);
-  pinMode(QYA, OUTPUT);
-  pinMode(QYB, OUTPUT);
-
-  digitalWrite(QXA, LOW);
-  digitalWrite(QXB, LOW);
-  digitalWrite(QYA, LOW);
-  digitalWrite(QYB, LOW);
-  
-  quad_x = 0;
-  quad_y = 0;
 
   delta_x = 0;
   delta_y = 0;
@@ -341,7 +359,6 @@ unsigned int delta_x_raw, delta_y_raw, delta_xy_raw;
 //   B  ______|     |_____|
 //       00 01 11 10 00 01 11 10
 
-const unsigned int quad_state[] = { 0, 1, 3, 2 };
 unsigned char output_sweep = 0;
 unsigned long last_update;
 volatile byte button_state, prev_button_state, button_update;
@@ -625,45 +642,27 @@ void loop() {
 //  button_state = ((buttons & BIT2) << 2) | (buttons & BIT1) | ((buttons & BIT0) << 5);
 
   }
-/*
-  // detect MMB press -> if no activity on MMB line from mouse driver - use pin to simulate real button
-  if((!(button_state & BIT5)) && ((millis() - mmb_activity) > 100)) {
-    detachInterrupt(MMB);
-    pinMode(MMB, OUTPUT);
-    digitalWrite(MMB, LOW);
-  } else {
-    pinMode(MMB, INPUT_PULLUP); // set it as output only when we need to pull it down
-    attachInterrupt(MMB, mmb_falling, FALLING);
-  }
-*/
 
-//  if(button_state & BIT0) {
-//    ++fake_code;
-//    fake_code &= 0x3F;
-//  }
-//  if(button_state & BIT1) {
-//    --fake_code;
-//    fake_code &= 0x3F;
-//  }
-
-/*/  if(!mmb_trigger && ((millis() - mmb_last_trigger) > 100) && (mmb_prev_state ^ (P1IN & BIT4))) {
-  if(mmb_prev_state ^ (P1IN & BIT4)) {
-    mmb_prev_state = (P1IN & BIT4);
-    if(P1IN & BIT4) {
-      if(!mmb_attached_irq) {
-        pinMode(MMB, INPUT_PULLUP); // set it as output only when we need to pull it down
-        attachInterrupt(MMB, mmb_falling, FALLING);
-        mmb_attached_irq = 1;
+  if(button_state & BIT2) {
+    if(button_update & BIT1) {
+      // change resolution to finer - button 4th
+      if(sensor_resolution < 3) {
+        ++sensor_resolution;
+        sensor_resolution &= 0x03;
+        set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
       }
-    } else {
-      if(mmb_attached_irq) {
-        detachInterrupt(MMB);
-        pinMode(MMB, OUTPUT); // set it as output only when we need to pull it down
-        digitalWrite(MMB, LOW);
-      }
-      mmb_attached_irq = 0;
+      button_update &= ~BIT1;
     }
-  }*/
+    if(button_update & BIT0) {
+      // change resolution to coarser - button 5th
+      if(sensor_resolution > 1) {
+        --sensor_resolution;
+        sensor_resolution &= 0x03;
+        set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
+      }
+      button_update &= ~BIT0;
+    }
+  }
 }
 
 void set_motion() {
@@ -688,12 +687,18 @@ volatile byte quad_raw_out, test;
 //  x   0   0   1   0   5th
 
 volatile byte code_send;
-#define CODE_IDLE 0
-#define CODE_WHEEL_UP 1
-#define CODE_WHEEL_DOWN 2
-#define CODE_MMB_CHANGE 3
-#define CODE_4TH_CHANGE 4
-#define CODE_5TH_CHANGE 5
+
+#define CODE_IDLE         0
+#define CODE_WHEEL_UP     (0x0C << 1)
+#define CODE_WHEEL_DOWN   (0x0E << 1)
+#define CODE_WHEEL_LEFT   (0x0B << 1)
+#define CODE_WHEEL_RIGHT  (0x09 << 1)
+#define CODE_MMB_DOWN     (0x0F << 1)
+#define CODE_MMB_UP       (0x0D << 1)
+#define CODE_4TH_DOWN     (0x07 << 1)
+#define CODE_4TH_UP       (0x05 << 1)
+#define CODE_5TH_DOWN     (0x0A << 1)
+#define CODE_5TH_UP       (0x06 << 1)
 
 void mmb_falling() {
 
@@ -734,40 +739,39 @@ void mmb_falling() {
   code_send = CODE_IDLE;
   if(scroll_change != 0) {
     if(scroll_change < 0) {
-      P2OUT = (quad_raw_out ^ (BIT1 | ((button_state & BIT2) << 1))) | BIT5;        //  0x0200
       code_send = CODE_WHEEL_DOWN;
     } else  {
-      P2OUT = (quad_raw_out ^ (BIT1 | BIT2 | ((button_state & BIT2) << 1))) | BIT5; //  0x0201
       code_send = CODE_WHEEL_UP;
     }
+    if(button_state & BIT2)
+      code_send ^= (BIT1 | BIT3);
+    P2OUT = (quad_raw_out ^ code_send) | BIT5;
   } else {
     if((button_update & BIT4) || (mmb_prev_state ^ (P1IN & BIT4))) {
       if((P1IN & BIT4)) {
-        P2OUT = (quad_raw_out ^ (BIT1 |        BIT3 | BIT4)) | BIT5; // 0x0000 mmb down
         mmb_prev_state = BIT4 ;//(P1IN & BIT4);
+        code_send = CODE_MMB_UP;
       } else {
-        P2OUT = (quad_raw_out ^ (BIT1 | BIT2 | BIT3 | BIT4)) | BIT5; // 0x0001 mmb up
         mmb_prev_state = 0; //(P1IN & BIT4);
+        code_send = CODE_MMB_DOWN;
       }
-      code_send = CODE_MMB_CHANGE;
+      P2OUT = (quad_raw_out ^ code_send) | BIT5;
     } else {
       if(button_update & BIT1) {
         // 4th - left side button
         if(button_state & BIT1)
-          P2OUT = (quad_raw_out ^ (BIT3 |               BIT4)) | BIT5;  // 0x0002 4th down
+          code_send = CODE_4TH_DOWN;
         else
-          P2OUT = (quad_raw_out ^ (BIT2 |        BIT3 | BIT4)) | BIT5; // 0x0003
-        code_send = CODE_4TH_CHANGE;
+          code_send = CODE_4TH_UP;
+        P2OUT = (quad_raw_out ^ code_send) | BIT5;
       } else {
         if(button_update & BIT0) {
           // 5th button - right side button
           if(button_state & BIT0)
-            P2OUT = (quad_raw_out ^ (BIT1 | BIT2 |        BIT4)) | BIT5; // 0x0100
+            code_send = CODE_5TH_DOWN;
           else
-            P2OUT = (quad_raw_out ^ (BIT1 |               BIT4)) | BIT5; // 0x0101
-          code_send = CODE_5TH_CHANGE;
-//        } else {
-          //P2OUT = quad_raw_out | BIT5;
+            code_send = CODE_5TH_UP;
+          P2OUT = (quad_raw_out ^ code_send) | BIT5; // 0x0100
         }
       }
     }
@@ -786,18 +790,23 @@ void mmb_falling() {
   if(!(P1IN & BIT3)) {
     switch(code_send)  {
       case CODE_WHEEL_UP:
+      case CODE_WHEEL_RIGHT:
           --scroll_change;
           break;
       case CODE_WHEEL_DOWN:
+      case CODE_WHEEL_LEFT:
           ++scroll_change;
           break;
-      case CODE_MMB_CHANGE:
+      case CODE_MMB_DOWN:
+      case CODE_MMB_UP:
           button_update &= ~BIT4;
           break;
-      case CODE_4TH_CHANGE:
+      case CODE_4TH_DOWN:
+      case CODE_4TH_UP:
           button_update &= ~BIT1;
           break;
-      case CODE_5TH_CHANGE:
+      case CODE_5TH_DOWN:
+      case CODE_5TH_UP:
           button_update &= ~BIT0;
           break;
     }
