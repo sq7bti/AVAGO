@@ -11,16 +11,16 @@
 // CS   P1.2
 
                                  ______________
-                            Vcc  |            | GND                DB9 8
+                            Vcc  | 1       20 | GND                DB9 8
              3b/ADC input   P1_0 |            | P2_6   QRA
                MOTION/IRQ   P1_1 |            | P2_7   QRB
                       CS    P1_2 |            | TEST
-        DB9 5         MMB   P1_3 |            | RESET
+        DB9 5         MMB   P1_3 | 5          | RESET
                 mmb-in      P1_4 |            | P1_7   MOSI
                       CLK   P1_5 |            | P1_6   MISO
         DB9 9        !RMB   P2_0 |            | P2_5   LMB         DB9 6
    XQ   DB9 4         QXA   P2_1 |            | P2_4   QYA         DB9 3 YQ
-    X   DB9 2         QXB   P2_2 |____________| P2_3   QYB         DB9 1  Y
+    X   DB9 2         QXB   P2_2 |_10______11_| P2_3   QYB         DB9 1  Y
 
 mouse pinout DB9:
      QYB QXB QYA QXA
@@ -29,7 +29,7 @@ mouse pinout DB9:
    _______________________     2   blk     10
    \  1   2   3   4   5  /     3   gry     12
     \                   /      4   org      9
-     \__6___7___8___9_ /       5   brw      6
+     \__6___7___8___9_ /       5   brw      5
        LMB  +  gnd RMB         6   grn    LMB -|<|- 13 = low VF diode
                    PotX        7   wht     +5vcc 
                                8   blu    GND
@@ -55,7 +55,7 @@ mouse pinout DB9:
 #ifdef DRIVER_BLABBER
 // 25 lines in VBR interrupt routine corresponds to approx 50us pulse
 // IRQ reacts approx 18..20us after falling edge
-//#define USE_FIXED_DELAY 28
+//#define USE_FIXED_DELAY 35
 #define USE_FIXED_DELAY 40
 #endif
 
@@ -93,7 +93,8 @@ mouse pinout DB9:
 
 #define  LASER_RANGE      LASER_10MA
 /* 0x00 -> 33.6%, 0xff -> 100%*/
-#define  LASER_POWER      0xB5
+//#define  LASER_POWER      0xB5
+#define  LASER_POWER      0xC2
 
 #define  REG_LASER_CTRL0  0x1a
 #define  REG_LASER_CTRL1  0x1f
@@ -695,8 +696,8 @@ volatile byte code_send;
 #define CODE_WHEEL_RIGHT  (0x09 << 1)
 #define CODE_MMB_DOWN     (0x0F << 1)
 #define CODE_MMB_UP       (0x0D << 1)
-#define CODE_4TH_DOWN     (0x07 << 1)
-#define CODE_4TH_UP       (0x05 << 1)
+#define CODE_4TH_DOWN     (0x05 << 1)
+#define CODE_4TH_UP       (0x07 << 1)
 #define CODE_5TH_DOWN     (0x0A << 1)
 #define CODE_5TH_UP       (0x06 << 1)
 
