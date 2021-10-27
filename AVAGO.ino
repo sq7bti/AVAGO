@@ -56,7 +56,7 @@ mouse pinout DB9:
 // 25 lines in VBR interrupt routine corresponds to approx 50us pulse
 // IRQ reacts approx 18..20us after falling edge
 //#define USE_FIXED_DELAY 35
-#define USE_FIXED_DELAY 40
+#define USE_FIXED_DELAY 45
 #endif
 
 #define  REG_PRODUCT_ID       0x00
@@ -199,7 +199,7 @@ void setup() {
 
   // initialize SPI:
   SPI.begin(); 
-  SPI.setClockDivider(16); // 1MHz SPI
+  SPI.setClockDivider(24); // 1MHz SPI
 
   delayMicroseconds(250);
 
@@ -454,11 +454,11 @@ void loop() {
       --motion;
 
     if(motion_status & REG_MOTION_MOT) {
-      if(delta_x > 1)
+      if(abs(delta_x) > 1)
         change_period_x = constrain(133 / (abs(delta_x)), 1, 45);
       else
         change_period_x = 1;
-      if(delta_y > 1)
+      if(abs(delta_y) > 1)
         change_period_y = constrain(133 / (abs(delta_y)), 1, 45);
       else
         change_period_y = 1;
@@ -547,6 +547,11 @@ void loop() {
     change_period_lapsed_y = change_period_y;
   }
   --change_period_lapsed_y;
+
+  // just in case there is still IRQ pending
+  if((delta_x == 0) && (delta_y == 0) && (!(P1IN & BIT1))) {
+    ++motion;
+  }
 
   adc_avg = 1024 - ((adc[0]+adc[1]+adc[2]+adc[3]+adc[4]+adc[5]+adc[6]+adc[7]+adc[8]+adc[9]+adc[10]+adc[11]+adc[12]+adc[13]+adc[14]+adc[15]) / 16);
 
@@ -645,7 +650,7 @@ void loop() {
   }
 
   if(button_state & BIT2) {
-    if(button_update & BIT1) {
+    if(button_state & BIT1) {
       // change resolution to finer - button 4th
       if(sensor_resolution < 3) {
         ++sensor_resolution;
@@ -653,8 +658,9 @@ void loop() {
         set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
       }
       button_update &= ~BIT1;
+      button_state &= ~BIT1;
     }
-    if(button_update & BIT0) {
+    if(button_state & BIT0) {
       // change resolution to coarser - button 5th
       if(sensor_resolution > 1) {
         --sensor_resolution;
@@ -662,6 +668,7 @@ void loop() {
         set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
       }
       button_update &= ~BIT0;
+      button_state &= ~BIT0;
     }
   }
 }
