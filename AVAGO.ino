@@ -798,6 +798,8 @@ void mmb_falling() {
   ++mmb_trigger;
   mmb_last_trigger = millis();
 
+  // MMB is kept longer to confirm reception
+  // only then we can clear status for each code sent
   if(!(P1IN & BIT3)) {
     switch(code_send)  {
       case CODE_WHEEL_UP:
