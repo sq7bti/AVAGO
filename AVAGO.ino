@@ -745,45 +745,48 @@ void mmb_falling() {
 
 #ifdef DRIVER_BLABBER
   code_send = CODE_IDLE;
-  if(scroll_change != 0) {
-    if(scroll_change < 0) {
-      code_send = CODE_WHEEL_DOWN;
-    } else  {
-      code_send = CODE_WHEEL_UP;
+
+  if((button_update & BIT4) || (mmb_prev_state ^ (P1IN & BIT4))) {
+    if((P1IN & BIT4)) {
+      mmb_prev_state = BIT4 ;//(P1IN & BIT4);
+      code_send = CODE_MMB_UP;
+    } else {
+      mmb_prev_state = 0; //(P1IN & BIT4);
+      code_send = CODE_MMB_DOWN;
     }
-    if(button_state & BIT2)
-      code_send ^= (BIT1 | BIT3);
     P2OUT = (quad_raw_out ^ code_send) | BIT5;
   } else {
-    if((button_update & BIT4) || (mmb_prev_state ^ (P1IN & BIT4))) {
-      if((P1IN & BIT4)) {
-        mmb_prev_state = BIT4 ;//(P1IN & BIT4);
-        code_send = CODE_MMB_UP;
-      } else {
-        mmb_prev_state = 0; //(P1IN & BIT4);
-        code_send = CODE_MMB_DOWN;
-      }
+    if(button_update & BIT1) {
+      // 4th - left side button
+      if(button_state & BIT1)
+        code_send = CODE_4TH_DOWN;
+      else
+        code_send = CODE_4TH_UP;
       P2OUT = (quad_raw_out ^ code_send) | BIT5;
     } else {
-      if(button_update & BIT1) {
-        // 4th - left side button
-        if(button_state & BIT1)
-          code_send = CODE_4TH_DOWN;
+      if(button_update & BIT0) {
+        // 5th button - right side button
+        if(button_state & BIT0)
+          code_send = CODE_5TH_DOWN;
         else
-          code_send = CODE_4TH_UP;
-        P2OUT = (quad_raw_out ^ code_send) | BIT5;
+          code_send = CODE_5TH_UP;
+        P2OUT = (quad_raw_out ^ code_send) | BIT5; // 0x0100
       } else {
-        if(button_update & BIT0) {
-          // 5th button - right side button
-          if(button_state & BIT0)
-            code_send = CODE_5TH_DOWN;
-          else
-            code_send = CODE_5TH_UP;
-          P2OUT = (quad_raw_out ^ code_send) | BIT5; // 0x0100
+        if(scroll_change != 0) {
+          if(scroll_change < 0) {
+            code_send = CODE_WHEEL_DOWN;
+          } else  {
+            code_send = CODE_WHEEL_UP;
+          }
+          if(button_state & BIT2)
+            code_send ^= (BIT1 | BIT3);
+          P2OUT = (quad_raw_out ^ code_send) | BIT5;
         }
       }
     }
   }
+
+
 #endif // BLABBER
 
   // with code confirmation we must not wait for falling edge
