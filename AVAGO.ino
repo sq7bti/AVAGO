@@ -31,10 +31,10 @@ mouse pinout DB9:
     \                   /      4   org      9
      \__6___7___8___9_ /       5   brw      5
        LMB  +  gnd RMB         6   grn    LMB -|<|- 13 = low VF diode
-                   PotX        7   wht     +5vcc 
+                   PotX        7   wht     +5vcc
                                8   blu    GND
                                9   ylw      8 to gate of MOSFET, RMB pulled down when high
-
+L F B R
 */
 
 //#define DEBUG 1
@@ -46,7 +46,7 @@ mouse pinout DB9:
 
 #ifdef DRIVER_COCOLINO
   // total time of MMB low: 64...65us
-  // excluding ISR reaction: 32us ... 33 (45us) 
+  // excluding ISR reaction: 32us ... 33 (45us)
 #define USE_FIXED_DELAY 47
 #endif
 #ifdef DRIVER_EZMOUSE
@@ -56,7 +56,7 @@ mouse pinout DB9:
 // 25 lines in VBR interrupt routine corresponds to approx 50us pulse
 // IRQ reacts approx 18..20us after falling edge
 //#define USE_FIXED_DELAY 35
-#define USE_FIXED_DELAY 45
+#define USE_FIXED_DELAY 40
 #endif
 
 #define  REG_PRODUCT_ID       0x00
@@ -93,8 +93,8 @@ mouse pinout DB9:
 
 #define  LASER_RANGE      LASER_10MA
 /* 0x00 -> 33.6%, 0xff -> 100%*/
-//#define  LASER_POWER      0xB5
-#define  LASER_POWER      0xC2
+#define  LASER_POWER      0xB5
+//#define  LASER_POWER      0xC2
 
 #define  REG_LASER_CTRL0  0x1a
 #define  REG_LASER_CTRL1  0x1f
@@ -141,7 +141,9 @@ const unsigned int quad_state[] = { 0, 1, 3, 2 };
 unsigned int motion = 200, k = 0, adc_avg;
 unsigned int quad_x, quad_y, t;
 signed delta_x, delta_y;
-unsigned int sensor_resolution;
+signed int sensor_resolution;
+signed int sensor_divisor;
+volatile byte button_state, prev_button_state, button_update;
 
 volatile unsigned char SW_state;
 volatile signed int scroll_change = 0;
@@ -164,7 +166,7 @@ void set_reg(int address, int value) {
 #ifdef GPIO_OUT_SET_SUB
   GPIO_OUT_SET_SUB(1, 2);
 #else
-  digitalWrite(NCS,HIGH); 
+  digitalWrite(NCS,HIGH);
 #endif
 }
 
@@ -185,7 +187,7 @@ int get_reg(int address) {
 #ifdef GPIO_OUT_SET_SUB
   GPIO_OUT_SET_SUB(1, 2);
 #else
-  digitalWrite(NCS,HIGH); 
+  digitalWrite(NCS,HIGH);
 #endif
   return value;
 }
@@ -198,7 +200,7 @@ void setup() {
   pinMode(MOTION_PIN, INPUT_PULLUP);
 
   // initialize SPI:
-  SPI.begin(); 
+  SPI.begin();
   SPI.setClockDivider(24); // 1MHz SPI
 
   delayMicroseconds(250);
@@ -227,10 +229,12 @@ void setup() {
 
 /* CONFIG2_400CPI, CONFIG2_800CPI, CONFIG2_1200CPI, CONFIG2_1600CPI */
   sensor_resolution = 0;
+  sensor_divisor = 1;
   set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
 
   // wait for at least one frame ?
   delayMicroseconds(250);
+
 
   // clear observation register
   set_reg(REG_OBSERVATION, 0x00);
@@ -245,7 +249,7 @@ void setup() {
   digitalWrite(QXB, LOW);
   digitalWrite(QYA, LOW);
   digitalWrite(QYB, LOW);
-  
+
   quad_x = 0;
   quad_y = 0;
 
@@ -288,7 +292,7 @@ void setup() {
   get_reg(REG_DELTA_X);                    // 0x03
   get_reg(REG_DELTA_Y);                    // 0x04
   get_reg(REG_DELTA_XY_H);                 // 0x05
- 
+
   set_reg(0x3c, 0x27);    // 0xbc
   delayMicroseconds(10);
   set_reg(0x22, 0x0a);    // 0xa2
@@ -334,6 +338,9 @@ void setup() {
   // set motion pin as interrupt input FALLING
   attachInterrupt(MOTION_PIN, set_motion, FALLING);
 
+  button_state = 0;
+  prev_button_state = 0;
+
   // setting up ADC on pin P1_0
   ADC10CTL1 = CONSEQ_2 | INCH_0 | ADC10DIV_7;            // Repeat single channel, A3
   ADC10CTL0 = SREF_0 + ADC10SHT_2 + MSC + ADC10ON + ADC10IE; // Sample & Hold Time + ADC10 ON + Interrupt Enable
@@ -362,7 +369,6 @@ unsigned int delta_x_raw, delta_y_raw, delta_xy_raw;
 
 unsigned char output_sweep = 0;
 unsigned long last_update;
-volatile byte button_state, prev_button_state, button_update;
 unsigned int motion_status;
 
 unsigned int get_burst(bool get_all = true) {
@@ -390,7 +396,7 @@ unsigned int get_burst(bool get_all = true) {
 #ifdef GPIO_OUT_SET_SUB
   GPIO_OUT_SET_SUB(1, 2);
 #else
-  digitalWrite(NCS,HIGH); 
+  digitalWrite(NCS,HIGH);
 #endif
 
   return value;
@@ -447,6 +453,7 @@ void loop() {
     if(delta_y_raw < 0x800) {
       delta_y += delta_y_raw;
     } else {
+
       delta_y += ((signed int)delta_y_raw - 0x1000);
     }
 
@@ -465,6 +472,7 @@ void loop() {
       change_period_lapsed_x = 0;
       change_period_lapsed_y = 0;
     }
+
 
   }
 
@@ -508,13 +516,13 @@ void loop() {
 //    fake_code &= 0x3F;
   }
 
-  if((delta_x != 0) && (!change_period_lapsed_x)) {
+  if((abs(delta_x) >= sensor_divisor) && (!change_period_lapsed_x)) {
     if(delta_x > 0) {
       ++quad_x;
-      --delta_x;
+      delta_x -= sensor_divisor;
     } else {
       --quad_x;
-      ++delta_x;
+      delta_x += sensor_divisor;
     }
     quad_x &= 0x03;
 #ifdef GPIO_OUT_SET_SUB
@@ -528,13 +536,13 @@ void loop() {
   }
   --change_period_lapsed_x;
 
-  if((delta_y != 0) && (!change_period_lapsed_y)) {
+  if((abs(delta_y) >= sensor_divisor) && (!change_period_lapsed_y)) {
     if(delta_y > 0) {
       ++quad_y;
-      --delta_y;
+      delta_y -= sensor_divisor;
     } else {
       --quad_y;
-      ++delta_y;
+      delta_y += sensor_divisor;
     }
     quad_y &= 0x03;
 #ifdef GPIO_OUT_SET_SUB
@@ -542,15 +550,16 @@ void loop() {
     (quad_state[quad_y] & 0x02)?GPIO_OUT_SET_SUB(2, 4):GPIO_OUT_CLR_SUB(2, 4);
 #else
     digitalWrite(QYA, (quad_state[quad_y] & 0x01)?HIGH:LOW);
-    digitalWrite(QYB, (quad_state[quad_y] & 0x02)?HIGH:LOW);
+    digitalW
+    rite(QYB, (quad_state[quad_y] & 0x02)?HIGH:LOW);
 #endif
     change_period_lapsed_y = change_period_y;
   }
   --change_period_lapsed_y;
 
   // just in case there is still IRQ pending
-  if((delta_x == 0) && (delta_y == 0) && (!(P1IN & BIT1))) {
-    ++motion;
+  if((abs(delta_x) > sensor_divisor) || (abs(delta_y) > sensor_divisor) && (!(P1IN & BIT1))) {
+    motion |= 1;
   }
 
   adc_avg = 1024 - ((adc[0]+adc[1]+adc[2]+adc[3]+adc[4]+adc[5]+adc[6]+adc[7]+adc[8]+adc[9]+adc[10]+adc[11]+adc[12]+adc[13]+adc[14]+adc[15]) / 16);
@@ -561,7 +570,7 @@ void loop() {
     min_adc = min(min_adc, adc[k]);
   }
 
-  if((max_adc - min_adc) < 10) {
+  if((millis() > 2000) && ((max_adc - min_adc) < 10)) {
 // 000 - 0
 #define THR1 55
 // 001 - 109 ... 113
@@ -580,6 +589,7 @@ void loop() {
 
 // 000 - 0
 // 001 - 109 ... 113  -> 4
+
 //           66
 // 010 - 179 ... 183  -> 4
 //           74
@@ -614,7 +624,8 @@ void loop() {
           button_state |= BIT0;
       } else {
         if(adc_avg > THR5)
-          button_state |= BIT0;
+          button_state |=
+          BIT0;
       }
     } else {
       if(adc_avg > THR2) {
@@ -638,40 +649,43 @@ void loop() {
       // modify sensitivity
       // flash LEDS to indicate, etc.
     }
-
-  // ignore 
-//  button_state &= ~BIT5;
-
-//  buttons ^= 0xff;
-//  buttons &= 0x32;
-//                      BIT4                     BIT1               BIT5
-//  button_state = ((buttons & BIT2) << 2) | (buttons & BIT1) | ((buttons & BIT0) << 5);
-
   }
 
   if(button_state & BIT2) {
-    if(button_state & BIT1) {
+    if((button_update & BIT1) && (button_state & BIT1)) {
       // change resolution to finer - button 4th
       if(sensor_resolution < 3) {
         ++sensor_resolution;
-        sensor_resolution &= 0x03;
-        set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
+    		if(sensor_resolution < 0) {
+          sensor_divisor = 1 << (unsigned int)abs(sensor_resolution);
+        } else {
+    			sensor_resolution &= 0x03;
+    			set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
+    			sensor_divisor = 1;
+    		}
+        P2OUT = BIT5 | BIT6 | BIT7 | ((abs(sensor_resolution) << 1) & 0x1E);
       }
       button_update &= ~BIT1;
-      button_state &= ~BIT1;
-    }
-    if(button_state & BIT0) {
-      // change resolution to coarser - button 5th
-      if(sensor_resolution > 1) {
-        --sensor_resolution;
-        sensor_resolution &= 0x03;
-        set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
+    } else {
+      if((button_update & BIT0) && (button_state & BIT0)) {
+        // change resolution to coarser - button 5th
+        if(sensor_resolution > -4) {
+          --sensor_resolution;
+          if(sensor_resolution < 0) {
+            sensor_divisor = 1 << (unsigned int)abs(sensor_resolution);
+          } else {
+      			sensor_resolution &= 0x03;
+      			set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
+      			sensor_divisor = 1;
+          }
+          P2OUT = BIT5 | BIT6 | BIT7 | ((abs(sensor_resolution) << 1) & 0x1E);
+        }
+        button_update &= ~BIT0;
       }
-      button_update &= ~BIT0;
-      button_state &= ~BIT0;
     }
   }
 }
+
 
 void set_motion() {
   ++motion;
@@ -697,16 +711,36 @@ volatile byte quad_raw_out, test;
 volatile byte code_send;
 
 #define CODE_IDLE         0
-#define CODE_WHEEL_UP     (0x0C << 1)
-#define CODE_WHEEL_DOWN   (0x0E << 1)
-#define CODE_WHEEL_LEFT   (0x0B << 1)
-#define CODE_WHEEL_RIGHT  (0x09 << 1)
-#define CODE_MMB_DOWN     (0x0F << 1)
-#define CODE_MMB_UP       (0x0D << 1)
-#define CODE_4TH_DOWN     (0x05 << 1)
-#define CODE_4TH_UP       (0x07 << 1)
-#define CODE_5TH_DOWN     (0x0A << 1)
+#define CODE_MMB_DOWN     (0x0D << 1)
+#define CODE_MMB_UP       (0x0E << 1)
+#define CODE_WHEEL_DOWN   (0x07 << 1)
+#define CODE_WHEEL_UP     (0x0B << 1)
+#define CODE_WHEEL_LEFT   (0x0A << 1)
+#define CODE_WHEEL_RIGHT  (0x05 << 1)
+#define CODE_4TH_DOWN     (0x0C << 1)
+#define CODE_4TH_UP       (0x09 << 1)
+#define CODE_5TH_DOWN     (0x03 << 1)
 #define CODE_5TH_UP       (0x06 << 1)
+
+/*
+                                        4321
+#define CODE_MMB_DOWN     (0x0F << 1)   1111 - 4
+#define CODE_WHEEL_DOWN   (0x0E << 1)   1110 - 3
+#define CODE_MMB_UP       (0x0D << 1)   1101 - 3
+#define CODE_WHEEL_UP     (0x0C << 1)   1100 - good
+#define CODE_WHEEL_LEFT   (0x0B << 1)   1011 - 3
+#define CODE_5TH_DOWN     (0x0A << 1)   1010 - bad
+#define CODE_WHEEL_RIGHT  (0x09 << 1)   1001 - bad
+-----------------------------08-------------------
+#define CODE_4TH_UP       (0x07 << 1)   0111 - 3
+#define CODE_5TH_UP       (0x06 << 1)   0110 - bad
+#define CODE_XXX_XXXX     (0x05 << 1)   0101 - bad
+-----------------------------04-------------------
+#define CODE_4TH_DOWN     (0x03 << 1)   0011 - good
+-----------------------------02--------------
+-----------------------------01--------------
+#define CODE_IDLE            00
+*/
 
 void mmb_falling() {
 
@@ -773,13 +807,10 @@ void mmb_falling() {
         P2OUT = (quad_raw_out ^ code_send) | BIT5; // 0x0100
       } else {
         if(scroll_change != 0) {
-          if(scroll_change < 0) {
-            code_send = CODE_WHEEL_DOWN;
-          } else  {
-            code_send = CODE_WHEEL_UP;
-          }
-          if(button_state & BIT2)
-            code_send ^= (BIT1 | BIT3);
+          if(scroll_change < 0)
+            code_send = (button_state & BIT2)?CODE_WHEEL_LEFT:CODE_WHEEL_DOWN;
+          else
+            code_send = (button_state & BIT2)?CODE_WHEEL_RIGHT:CODE_WHEEL_UP;
           P2OUT = (quad_raw_out ^ code_send) | BIT5;
         }
       }
