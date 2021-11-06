@@ -55,8 +55,8 @@ L F B R
 #ifdef DRIVER_BLABBER
 // 25 lines in VBR interrupt routine corresponds to approx 50us pulse
 // IRQ reacts approx 18..20us after falling edge
-//#define USE_FIXED_DELAY 35
-#define USE_FIXED_DELAY 40
+#define USE_FIXED_DELAY 30
+//#define USE_FIXED_DELAY 40
 #endif
 
 #define  REG_PRODUCT_ID       0x00
@@ -93,8 +93,8 @@ L F B R
 
 #define  LASER_RANGE      LASER_10MA
 /* 0x00 -> 33.6%, 0xff -> 100%*/
-#define  LASER_POWER      0xB5
-//#define  LASER_POWER      0xC2
+//#define  LASER_POWER      0xB5
+#define  LASER_POWER      0xC2
 
 #define  REG_LASER_CTRL0  0x1a
 #define  REG_LASER_CTRL1  0x1f
@@ -558,8 +558,8 @@ void loop() {
   --change_period_lapsed_y;
 
   // just in case there is still IRQ pending
-  if((abs(delta_x) > sensor_divisor) || (abs(delta_y) > sensor_divisor) && (!(P1IN & BIT1))) {
-    motion |= 1;
+  if((abs(delta_x) < sensor_divisor) && (abs(delta_y) < sensor_divisor) && (!(P1IN & BIT1))) {
+    ++motion;
   }
 
   adc_avg = 1024 - ((adc[0]+adc[1]+adc[2]+adc[3]+adc[4]+adc[5]+adc[6]+adc[7]+adc[8]+adc[9]+adc[10]+adc[11]+adc[12]+adc[13]+adc[14]+adc[15]) / 16);
@@ -644,6 +644,7 @@ void loop() {
     if(prev_button_state ^ button_state) {
       button_update |= prev_button_state ^ button_state;
     }
+    button_update &= ~BIT2;
     if(button_state & BIT5) {
       // do whatever should be done when top case button is pressed
       // modify sensitivity
@@ -657,7 +658,7 @@ void loop() {
       if(sensor_resolution < 3) {
         ++sensor_resolution;
     		if(sensor_resolution < 0) {
-          sensor_divisor = 1 << (unsigned int)abs(sensor_resolution);
+          sensor_divisor = abs(sensor_resolution);
         } else {
     			sensor_resolution &= 0x03;
     			set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
@@ -666,13 +667,14 @@ void loop() {
         P2OUT = BIT5 | BIT6 | BIT7 | ((abs(sensor_resolution) << 1) & 0x1E);
       }
       button_update &= ~BIT1;
+      button_state &= ~BIT1;
     } else {
       if((button_update & BIT0) && (button_state & BIT0)) {
         // change resolution to coarser - button 5th
         if(sensor_resolution > -4) {
           --sensor_resolution;
           if(sensor_resolution < 0) {
-            sensor_divisor = 1 << (unsigned int)abs(sensor_resolution);
+            sensor_divisor = abs(sensor_resolution);
           } else {
       			sensor_resolution &= 0x03;
       			set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
@@ -681,6 +683,7 @@ void loop() {
           P2OUT = BIT5 | BIT6 | BIT7 | ((abs(sensor_resolution) << 1) & 0x1E);
         }
         button_update &= ~BIT0;
+        button_state &= ~BIT0;
       }
     }
   }
