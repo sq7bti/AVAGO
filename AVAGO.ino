@@ -93,8 +93,8 @@ L F B R
 
 #define  LASER_RANGE      LASER_10MA
 /* 0x00 -> 33.6%, 0xff -> 100%*/
-//#define  LASER_POWER      0xB5
-#define  LASER_POWER      0xC2
+#define  LASER_POWER      0xB5
+//#define  LASER_POWER      0xC2
 
 #define  REG_LASER_CTRL0  0x1a
 #define  REG_LASER_CTRL1  0x1f
@@ -714,16 +714,16 @@ volatile byte quad_raw_out, test;
 volatile byte code_send;
 
 #define CODE_IDLE         0
+#define CODE_5TH_DOWN     (0x03 << 1)
+#define CODE_WHEEL_RIGHT  (0x05 << 1)
+#define CODE_5TH_UP       (0x06 << 1)
+#define CODE_WHEEL_DOWN   (0x07 << 1)
+#define CODE_4TH_UP       (0x09 << 1)
+#define CODE_WHEEL_LEFT   (0x0A << 1)
+#define CODE_WHEEL_UP     (0x0B << 1)
+#define CODE_4TH_DOWN     (0x0C << 1)
 #define CODE_MMB_DOWN     (0x0D << 1)
 #define CODE_MMB_UP       (0x0E << 1)
-#define CODE_WHEEL_DOWN   (0x07 << 1)
-#define CODE_WHEEL_UP     (0x0B << 1)
-#define CODE_WHEEL_LEFT   (0x0A << 1)
-#define CODE_WHEEL_RIGHT  (0x05 << 1)
-#define CODE_4TH_DOWN     (0x0C << 1)
-#define CODE_4TH_UP       (0x09 << 1)
-#define CODE_5TH_DOWN     (0x03 << 1)
-#define CODE_5TH_UP       (0x06 << 1)
 
 /*
                                         4321
