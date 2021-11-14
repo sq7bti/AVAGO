@@ -12,52 +12,36 @@
 
                                  ______________
                             Vcc  | 1       20 | GND                DB9 8
-             3b/ADC input   P1_0 |            | P2_6   QRA
+               top button   P1_0 |            | P2_6   QRA
                MOTION/IRQ   P1_1 |            | P2_7   QRB
                       CS    P1_2 |            | TEST
         DB9 5         MMB   P1_3 | 5          | RESET
                 mmb-in      P1_4 |            | P1_7   MOSI
                       CLK   P1_5 |            | P1_6   MISO
-        DB9 9        !RMB   P2_0 |            | P2_5   LMB         DB9 6
-   XQ   DB9 4         QXA   P2_1 |            | P2_4   QYA         DB9 3 YQ
-    X   DB9 2         QXB   P2_2 |_10______11_| P2_3   QYB         DB9 1  Y
+   XQ   DB9 4         QXA   P2_0 |            | P2_5   5th button
+    X   DB9 2         QXB   P2_1 |            | P2_4   4th button
+    Y   DB9 1         QYB   P2_2 |_10______11_| P2_3   QYA      DB9 3 YQ   
 
 mouse pinout DB9:
      QYB QXB QYA QXA
       Y   X  YQ  XQ  MMB     DB9   color   MCU
-      U   D   L   R  PotY      1   red     11
-   _______________________     2   blk     10
-   \  1   2   3   4   5  /     3   gry     12
-    \                   /      4   org      9
+      U   D   L   R  PotY      1   red     10
+   _______________________     2   blk      0
+   \  1   2   3   4   5  /     3   gry     11
+    \                   /      4   org      8
      \__6___7___8___9_ /       5   brw      5
-       LMB  +  gnd RMB         6   grn    LMB -|<|- 13 = low VF diode
-                   PotX        7   wht     +5vcc
+       LMB  +  gnd RMB         6   grn    LMB
+                   PotX        7   wht  +5vcc
                                8   blu    GND
-                               9   ylw      8 to gate of MOSFET, RMB pulled down when high
-L F B R
+                               9   ylw    RMB
 */
 
 //#define DEBUG 1
 
-// wheel protocol used (use appropriate driver on host)
-//#define DRIVER_COCOLINO
-//#define DRIVER_EZMOUSE
-#define DRIVER_BLABBER
-
-#ifdef DRIVER_COCOLINO
-  // total time of MMB low: 64...65us
-  // excluding ISR reaction: 32us ... 33 (45us)
-#define USE_FIXED_DELAY 47
-#endif
-#ifdef DRIVER_EZMOUSE
-#define USE_FIXED_DELAY 30
-#endif
-#ifdef DRIVER_BLABBER
 // 25 lines in VBR interrupt routine corresponds to approx 50us pulse
 // IRQ reacts approx 18..20us after falling edge
-#define USE_FIXED_DELAY 30
+#define USE_FIXED_DELAY 20
 //#define USE_FIXED_DELAY 40
-#endif
 
 #define  REG_PRODUCT_ID       0x00
 #define  REG_INV_PRODUCT_ID   0x3E
@@ -116,17 +100,21 @@ L F B R
 // quadrature inputs
 #define QRA P2_6
 #define QRB P2_7
-#define LMB P2_5
+
+//extra buttons
+#define BUTTON_5TH P2_5
+#define BUTTON_4TH P2_4
+#define TOP_BUTTON P1_0
+
 #define MMB P1_3
 #define MMB_IN P1_4
-#define RMB P2_0
 #define WHEEL_DELAY 5000
 
 // quadrature outputs
-#define QXA P2_1
-#define QXB P2_2
-#define QYA P2_3
-#define QYB P2_4
+#define QXA P2_0
+#define QXB P2_1
+#define QYA P2_2
+#define QYB P2_3
 
 #define MMBUTT PUSH2
 
@@ -138,7 +126,7 @@ L F B R
 #define SET_CPU_CLOCK(mhz) { DCOCTL = CALDCO_##mhz##MHZ; BCSCTL1 = CALBC1_##mhz##MHZ; };
 
 const unsigned int quad_state[] = { 0, 1, 3, 2 };
-unsigned int motion = 200, k = 0, adc_avg;
+unsigned int motion = 200, k = 0;
 unsigned int quad_x, quad_y, t;
 signed delta_x, delta_y;
 signed int sensor_resolution;
@@ -149,8 +137,6 @@ volatile unsigned char SW_state;
 volatile signed int scroll_change = 0;
 volatile unsigned int mmb_trigger;
 bool mmb_attached_irq;
-int adc[16] = {0}; //Sets up an array of 16 integers and zero's the values
-int max_adc, min_adc;
 
 void set_reg(int address, int value) {
   // take the SS pin low to select the chip:
@@ -234,7 +220,6 @@ void setup() {
 
   // wait for at least one frame ?
   delayMicroseconds(250);
-
 
   // clear observation register
   set_reg(REG_OBSERVATION, 0x00);
@@ -320,13 +305,9 @@ void setup() {
   pinMode(MMB, INPUT_PULLUP); // set it as output only when we need to pull it down
   pinMode(MMB_IN, INPUT_PULLUP);
 
-  pinMode(LMB, OUTPUT); // connected via diodes to corresponding pins in DB9
-  pinMode(RMB, OUTPUT); // connected via diodes to corresponding pins in DB9
-//  pinMode(RMB, INPUT_PULLUP); // connected via diodes to corresponding pins in DB9
-
-  digitalWrite(LMB, HIGH);
-//  digitalWrite(RMB, HIGH);
-  digitalWrite(RMB, LOW);
+  pinMode(BUTTON_5TH, INPUT_PULLUP);
+  pinMode(BUTTON_4TH, INPUT_PULLUP);
+  pinMode(TOP_BUTTON, INPUT_PULLUP);
 
 //  SW_state = (digitalRead(QRA) << 1) + digitalRead(QRB);
   SW_state = (P2IN >> 6) & 0x03;
@@ -340,19 +321,6 @@ void setup() {
 
   button_state = 0;
   prev_button_state = 0;
-
-  // setting up ADC on pin P1_0
-  ADC10CTL1 = CONSEQ_2 | INCH_0 | ADC10DIV_7;            // Repeat single channel, A3
-  ADC10CTL0 = SREF_0 + ADC10SHT_2 + MSC + ADC10ON + ADC10IE; // Sample & Hold Time + ADC10 ON + Interrupt Enable
-
-  ADC10DTC1 = 0x10;                 // 16 conversions
-  ADC10DTC0 |= ADC10CT;             // continuous transfer
-  ADC10AE0 |= BIT0;                 // P1.0 ADC option select
-
-  ADC10CTL0 &= ~ENC;                // Disable Conversion
-  while (ADC10CTL1 & BUSY);         // Wait if ADC10 busy
-  ADC10SA = (int)adc;               // Transfers data to next array (DTC auto increments address)
-  ADC10CTL0 |= ENC + ADC10SC;       // Enable Conversion and conversion start
 }
 
 unsigned int reg_val;
@@ -526,8 +494,8 @@ void loop() {
     }
     quad_x &= 0x03;
 #ifdef GPIO_OUT_SET_SUB
-    (quad_state[quad_x] & 0x01)?GPIO_OUT_SET_SUB(2, 1):GPIO_OUT_CLR_SUB(2, 1);
-    (quad_state[quad_x] & 0x02)?GPIO_OUT_SET_SUB(2, 2):GPIO_OUT_CLR_SUB(2, 2);
+    (quad_state[quad_x] & 0x01)?GPIO_OUT_SET_SUB(2, 0):GPIO_OUT_CLR_SUB(2, 0);
+    (quad_state[quad_x] & 0x02)?GPIO_OUT_SET_SUB(2, 1):GPIO_OUT_CLR_SUB(2, 1);
 #else
     digitalWrite(QXA, (quad_state[quad_x] & 0x01)?HIGH:LOW);
     digitalWrite(QXB, (quad_state[quad_x] & 0x02)?HIGH:LOW);
@@ -546,12 +514,11 @@ void loop() {
     }
     quad_y &= 0x03;
 #ifdef GPIO_OUT_SET_SUB
-    (quad_state[quad_y] & 0x01)?GPIO_OUT_SET_SUB(2, 3):GPIO_OUT_CLR_SUB(2, 3);
-    (quad_state[quad_y] & 0x02)?GPIO_OUT_SET_SUB(2, 4):GPIO_OUT_CLR_SUB(2, 4);
+    (quad_state[quad_y] & 0x01)?GPIO_OUT_SET_SUB(2, 2):GPIO_OUT_CLR_SUB(2, 2);
+    (quad_state[quad_y] & 0x02)?GPIO_OUT_SET_SUB(2, 3):GPIO_OUT_CLR_SUB(2, 3);
 #else
     digitalWrite(QYA, (quad_state[quad_y] & 0x01)?HIGH:LOW);
-    digitalW
-    rite(QYB, (quad_state[quad_y] & 0x02)?HIGH:LOW);
+    digitalWrite(QYB, (quad_state[quad_y] & 0x02)?HIGH:LOW);
 #endif
     change_period_lapsed_y = change_period_y;
   }
@@ -562,98 +529,17 @@ void loop() {
     ++motion;
   }
 
-  adc_avg = 1024 - ((adc[0]+adc[1]+adc[2]+adc[3]+adc[4]+adc[5]+adc[6]+adc[7]+adc[8]+adc[9]+adc[10]+adc[11]+adc[12]+adc[13]+adc[14]+adc[15]) / 16);
+  //button_state &= BIT0 | BIT4 | BIT5;
+  prev_button_state = button_state;
+  //             top button               4th    5th        MMB
+  button_state = (P1IN & BIT0) | (P2IN & (BIT4 | BIT5)) | ((P1IN & BIT4) >> 3);
 
-  max_adc = 0; min_adc = 1023;
-  for(k = 0; k < 10; ++k) {
-    max_adc = max(max_adc, adc[k]);
-    min_adc = min(min_adc, adc[k]);
+  if(prev_button_state ^ button_state) {
+    button_update |= prev_button_state ^ button_state;
   }
 
-  if((millis() > 2000) && ((max_adc - min_adc) < 10)) {
-// 000 - 0
-#define THR1 55
-// 001 - 109 ... 113
-#define THR2 146
-// 010 - 179 ... 183
-#define THR3 220
-// 011 - 257 ... 267
-#define THR4 298
-// 100 - 328 ... 331
-#define THR5 356
-// 101 - 380 ... 383
-#define THR6 399
-// 110 - 415 ... 420
-#define THR7 439
-// 111 - 457 ... 459
-
-// 000 - 0
-// 001 - 109 ... 113  -> 4
-
-//           66
-// 010 - 179 ... 183  -> 4
-//           74
-// 011 - 257 ... 267  -> 10
-//           61
-// 100 - 328 ... 331  -> 3
-//           49
-// 101 - 380 ... 383  -> 3
-//           32
-// 110 - 415 ... 420  -> 5
-//           37
-// 111 - 457 ... 459  -> 2
-
-//       7654 3210
-//000 -> 0000 0000
-//001 -> 0010 0000
-//010 -> 0001 0000
-//011 -> 0011 0000
-//100 -> 0000 0010
-//101 -> 0010 0010
-//110 -> 0001 0010
-//111 -> 0011 0010
-
-    button_state &= 0x1f;
-    prev_button_state = button_state;
-    button_state = 0;
-    if(adc_avg > THR4) {
-      button_state |= BIT2;
-      if(adc_avg > THR6) {
-        button_state |= BIT1;
-        if(adc_avg > THR7)
-          button_state |= BIT0;
-      } else {
-        if(adc_avg > THR5)
-          button_state |=
-          BIT0;
-      }
-    } else {
-      if(adc_avg > THR2) {
-        button_state |= BIT1;
-        if(adc_avg > THR3)
-          button_state |= BIT0;
-      } else {
-        if(adc_avg > THR1)
-          button_state |= BIT0;
-      }
-    }
-
-    button_state &= ~BIT4;
-    button_state |= (P1IN & BIT4);
-
-    if(prev_button_state ^ button_state) {
-      button_update |= prev_button_state ^ button_state;
-    }
-    button_update &= ~BIT2;
-    if(button_state & BIT5) {
-      // do whatever should be done when top case button is pressed
-      // modify sensitivity
-      // flash LEDS to indicate, etc.
-    }
-  }
-
-  if(button_state & BIT2) {
-    if((button_update & BIT1) && (button_state & BIT1)) {
+  if(!(button_state & BIT0)) {
+    if((button_update & BIT4) && !(button_state & BIT4)) {
       // change resolution to finer - button 4th
       if(sensor_resolution < 3) {
         ++sensor_resolution;
@@ -664,12 +550,12 @@ void loop() {
     			set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
     			sensor_divisor = 1;
     		}
-        P2OUT = BIT5 | BIT6 | BIT7 | ((abs(sensor_resolution) << 1) & 0x1E);
+        P2OUT = BIT4 | BIT5 | BIT6 | BIT7 | (abs(sensor_resolution+4) & 0x0F);
       }
-      button_update &= ~BIT1;
-      button_state &= ~BIT1;
+      button_update &= ~BIT4;
+      //button_state |= BIT4;
     } else {
-      if((button_update & BIT0) && (button_state & BIT0)) {
+      if((button_update & BIT5) && !(button_state & BIT5)) {
         // change resolution to coarser - button 5th
         if(sensor_resolution > -4) {
           --sensor_resolution;
@@ -680,10 +566,10 @@ void loop() {
       			set_reg(REG_CONFIGURATION2, CONFIG2_400CPI | (sensor_resolution << 5)); //   0x12 (0x92)
       			sensor_divisor = 1;
           }
-          P2OUT = BIT5 | BIT6 | BIT7 | ((abs(sensor_resolution) << 1) & 0x1E);
+          P2OUT = BIT4 | BIT5 | BIT6 | BIT7 | (abs(sensor_resolution+4) & 0x0F);
         }
-        button_update &= ~BIT0;
-        button_state &= ~BIT0;
+        button_update &= ~BIT5;
+        //button_state |= BIT5;
       }
     }
   }
@@ -696,94 +582,48 @@ void set_motion() {
 
 volatile byte quad_raw_out, test;
 
-//P2_0 RMB -> inverse logic
-//P2_1 QXA XQ
-//P2_2 QXB  X
-//P2_3 QYA YQ
-//P2_4 QYB  Y
-//P2_5 LMB -> HIGH
+//P2_0 QXA XQ
+//P2_1 QXB  X
+//P2_2 QYA YQ
+//P2_3 QYB  Y
 
-//QXA QXB QYA QYB RMB
-//  1   1   1   1   0   idle
-//  0   x   x   x   0   MMB down
-//  x   0   1   0   0   wheel up
-//  x   1   0   0   0   wheel down
-//  x   0   0   0   0   4th
-//  x   0   0   1   0   5th
+// /----- QYB
+// |/---- QYA
+// ||/--- QXB
+// |||/-- QXA
+// 3210
+// 0011 CODE_5TH_DOWN     (0x03)
+// 0101 CODE_WHEEL_RIGHT  (0x05)
+// 0110 CODE_5TH_UP       (0x06)
+// 0111 CODE_WHEEL_DOWN   (0x07)
+// 1001 CODE_4TH_UP       (0x09)
+// 1010 CODE_WHEEL_LEFT   (0x0A)
+// 1011 CODE_WHEEL_UP     (0x0B)
+// 1100 CODE_4TH_DOWN     (0x0C)
+// 1101 CODE_MMB_DOWN     (0x0D)
+// 1110 CODE_MMB_UP       (0x0E)
 
 volatile byte code_send;
 
 #define CODE_IDLE         0
-#define CODE_5TH_DOWN     (0x03 << 1)
-#define CODE_WHEEL_RIGHT  (0x05 << 1)
-#define CODE_5TH_UP       (0x06 << 1)
-#define CODE_WHEEL_DOWN   (0x07 << 1)
-#define CODE_4TH_UP       (0x09 << 1)
-#define CODE_WHEEL_LEFT   (0x0A << 1)
-#define CODE_WHEEL_UP     (0x0B << 1)
-#define CODE_4TH_DOWN     (0x0C << 1)
-#define CODE_MMB_DOWN     (0x0D << 1)
-#define CODE_MMB_UP       (0x0E << 1)
-
-/*
-                                        4321
-#define CODE_MMB_DOWN     (0x0F << 1)   1111 - 4
-#define CODE_WHEEL_DOWN   (0x0E << 1)   1110 - 3
-#define CODE_MMB_UP       (0x0D << 1)   1101 - 3
-#define CODE_WHEEL_UP     (0x0C << 1)   1100 - good
-#define CODE_WHEEL_LEFT   (0x0B << 1)   1011 - 3
-#define CODE_5TH_DOWN     (0x0A << 1)   1010 - bad
-#define CODE_WHEEL_RIGHT  (0x09 << 1)   1001 - bad
------------------------------08-------------------
-#define CODE_4TH_UP       (0x07 << 1)   0111 - 3
-#define CODE_5TH_UP       (0x06 << 1)   0110 - bad
-#define CODE_XXX_XXXX     (0x05 << 1)   0101 - bad
------------------------------04-------------------
-#define CODE_4TH_DOWN     (0x03 << 1)   0011 - good
------------------------------02--------------
------------------------------01--------------
-#define CODE_IDLE            00
-*/
+#define CODE_5TH_DOWN     (0x03)
+#define CODE_WHEEL_RIGHT  (0x05)
+#define CODE_5TH_UP       (0x06)
+#define CODE_WHEEL_DOWN   (0x07)
+#define CODE_4TH_UP       (0x09)
+#define CODE_WHEEL_LEFT   (0x0A)
+#define CODE_WHEEL_UP     (0x0B)
+#define CODE_4TH_DOWN     (0x0C)
+#define CODE_MMB_DOWN     (0x0D)
+#define CODE_MMB_UP       (0x0E)
 
 void mmb_falling() {
 
-  quad_raw_out = P2OUT | BIT5;
+  quad_raw_out = P2OUT; // | BIT4 | BIT5;
 
-#ifdef DRIVER_COCOLINO
-  if(scroll_change != 0) {
-    if(scroll_change < 0) {
-      P2OUT =  BIT0 | BIT1 | BIT6 | BIT7 | ((P1IN & BIT4) << 1); //QXA
-      ++scroll_change;
-    } else {
-      P2OUT = BIT0 |         BIT6 | BIT7 | ((P1IN & BIT4) << 1); // activate MOSFET on RMB
-      --scroll_change;
-    }
-  } else { // 5th BIT1 -> QXA -> XQ pin 4   4th BIT4 -> QYB -> Y pin 3                                                    MMB BIT5 LMB pin 6
-    P2OUT =  ((button_state & BIT0) << 1) | ((button_state & BIT1) << 3) | BIT6 | BIT7 | (quad_raw_out & (BIT2 | BIT3)) | ((P1IN & BIT4) << 1);
-  }
-#endif // COCOLINO
-
-#ifdef DRIVER_EZMOUSE
-  if(scroll_change != 0) {
-    // RMB clear, LMB unchanged
-    if(scroll_change < 0) {
-      //             MMB -> BIT1 -> QXB
-      P2OUT = BIT0 | ((P1IN & BIT4) >> 3) | BIT2 |        BIT5; // QXB
-      ++scroll_change;
-    } else  {
-      //             MMB -> BIT1 -> QYA
-      P2OUT = BIT0 | ((P1IN & BIT4) >> 3) |        BIT3 | BIT5; // QYA
-      --scroll_change;
-    }
-  } else { //                                        MMB -> BIT3?
-    P2OUT =  BIT0 | (quad_raw_out & (BIT2 | BIT3)) | ((P1IN & BIT4) << 1) | BIT6 | BIT7;
-  }
-#endif // EZMOUSE
-
-#ifdef DRIVER_BLABBER
   code_send = CODE_IDLE;
 
-  if((button_update & BIT4) || (mmb_prev_state ^ (P1IN & BIT4))) {
+  if((button_update & BIT1) || (mmb_prev_state ^ (P1IN & BIT4))) {
     if((P1IN & BIT4)) {
       mmb_prev_state = BIT4 ;//(P1IN & BIT4);
       code_send = CODE_MMB_UP;
@@ -791,43 +631,39 @@ void mmb_falling() {
       mmb_prev_state = 0; //(P1IN & BIT4);
       code_send = CODE_MMB_DOWN;
     }
-    P2OUT = (quad_raw_out ^ code_send) | BIT5;
+    P2OUT = (quad_raw_out ^ code_send);
   } else {
-    if(button_update & BIT1) {
+    if(button_update & BIT4) {
       // 4th - left side button
-      if(button_state & BIT1)
-        code_send = CODE_4TH_DOWN;
-      else
+      if(button_state & BIT4)
         code_send = CODE_4TH_UP;
-      P2OUT = (quad_raw_out ^ code_send) | BIT5;
+      else
+        code_send = CODE_4TH_DOWN;
+      P2OUT = (quad_raw_out ^ code_send);
     } else {
-      if(button_update & BIT0) {
+      if(button_update & BIT5) {
         // 5th button - right side button
-        if(button_state & BIT0)
-          code_send = CODE_5TH_DOWN;
-        else
+        if(button_state & BIT5)
           code_send = CODE_5TH_UP;
-        P2OUT = (quad_raw_out ^ code_send) | BIT5; // 0x0100
+        else
+          code_send = CODE_5TH_DOWN;
+        P2OUT = (quad_raw_out ^ code_send); // 0x0100
       } else {
         if(scroll_change != 0) {
           if(scroll_change < 0)
-            code_send = (button_state & BIT2)?CODE_WHEEL_LEFT:CODE_WHEEL_DOWN;
+            code_send = (button_state & BIT0)?CODE_WHEEL_DOWN:CODE_WHEEL_LEFT;
           else
-            code_send = (button_state & BIT2)?CODE_WHEEL_RIGHT:CODE_WHEEL_UP;
-          P2OUT = (quad_raw_out ^ code_send) | BIT5;
+            code_send = (button_state & BIT0)?CODE_WHEEL_UP:CODE_WHEEL_RIGHT;
+          P2OUT = (quad_raw_out ^ code_send);
         }
       }
     }
   }
 
-
-#endif // BLABBER
-
   // with code confirmation we must not wait for falling edge
   delayMicroseconds(USE_FIXED_DELAY);
 
-  // make sure to switch off MOSFET on RMB
-  P2OUT = quad_raw_out & ~BIT0;
+  P2OUT = quad_raw_out;
 
   ++mmb_trigger;
   mmb_last_trigger = millis();
@@ -846,15 +682,15 @@ void mmb_falling() {
           break;
       case CODE_MMB_DOWN:
       case CODE_MMB_UP:
-          button_update &= ~BIT4;
+          button_update &= ~BIT1;
           break;
       case CODE_4TH_DOWN:
       case CODE_4TH_UP:
-          button_update &= ~BIT1;
+          button_update &= ~BIT4;
           break;
       case CODE_5TH_DOWN:
       case CODE_5TH_UP:
-          button_update &= ~BIT0;
+          button_update &= ~BIT5;
           break;
     }
   }
