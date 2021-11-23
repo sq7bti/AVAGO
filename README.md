@@ -34,12 +34,12 @@ mouse pinout DB9:
 Among not included components in the above schematics is 3.3V regulator, necessary to run MSP430 at it maximum clock 16MHz. It is supplied from 5V at pin 7 of DB9 port.
 Wire colors listed are for own reference (happened to be the one in the game controller replacement cable (DB9) offered on one of the far-east on-line retail shop)
 
-Before desoldering controller chip from the original mouse, dump the calibration values that are send during boot-up. Write down what values are written to register 0x1a LASER_CFG0/1 (0x1f) and 0x1c LSRPWR_CFG0/1 (0x1d). See datasheet page 7 for details.
+Before desoldering controller chip from the original mouse, dump the calibration values that are send during boot-up. Write down what values are written to register `0x1a` `LASER_CFG0/1` (`0x1f`) and `0x1c` `LSRPWR_CFG0/1` (`0x1d`). See datasheet page 7 for details.
 
 
 
 # Communication protocol
-- at constant intervals (VerticalBlankISR), host is polling with a low level at MMB line
+- at constant intervals (`VerticalBlankISR`), host is polling with a low level at MMB line
 - controller reacts at the falling edge of MMB linkage (see marker 1 - blue line MMB)
 - quadrature lines are negated with command for a brief movement (20us ... 40us) (see marker 2 - lines QXB and QYB)
 - after restoring original state of quadrature lines, state of MMB is checked to verify reception
