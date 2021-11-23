@@ -3,7 +3,7 @@ ADNS-7550 laser sensor chip for quadrature output mouse
 
 ![dell mouse](https://raw.githubusercontent.com/sq7bti/AVAGO/main/development%20setup.jpg)
 
-This project is based on a Dell mouse which is run by an unknown micro-controller, and SPI ADNS-7550 sensor chip. It made a very easy for me to modify it and drop in MSP430g2553 micro-chip in the same spot, after a handful of easy modifications: trace-cuts, and wire jumpers. A full schematic is missing but the pin assignment should tell whole story:
+This project is based on a Dell mouse which is run by an unknown micro-controller, and SPI ADNS-7550 sensor chip. It made a very easy for me to modify it and drop in msp430g2553 micro-chip in the same spot, after a handful of easy modifications: trace-cuts, and wire jumpers. A full schematic is missing but the pin assignment should tell whole story:
 
 ```
                                  ______________
@@ -31,8 +31,12 @@ mouse pinout DB9:
                                8   blu    GND
                                9   ylw    RMB
 ```
+Among not included components in the above schematics is 3.3V regulator, necessary to run MSP430 at it maximum clock 16MHz. It is supplied from 5V at pin 7 of DB9 port.
+Wire colors listed are for own reference (happened to be the one in the game controller replacement cable (DB9) offered on one of the far-east on-line retail shop)
 
 Before desoldering controller chip from the original mouse, dump the calibration values that are send during boot-up. Write down what values are written to register 0x1a LASER_CFG0/1 (0x1f) and 0x1c LSRPWR_CFG0/1 (0x1d). See datasheet page 7 for details.
+
+
 
 # Communication protocol
 - at constant intervals (VerticalBlankISR), host is polling with a low level at MMB line
@@ -42,3 +46,5 @@ Before desoldering controller chip from the original mouse, dump the calibration
   - if MMB line is still low - treat transaction as successfully (see marker 3)
 
 ![single transaction](SPI_interrupted.png)
+
+Corresponding host driver software can be obtained from [AmigaMouse](https://github.com/sq7bti/AmigaMouse) repository.
