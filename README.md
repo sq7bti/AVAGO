@@ -1,6 +1,6 @@
 # AVAGO
 ADNS-7550 laser sensor chip for quadrature output mouse
-
+![dell mouse](development_setup.png)
 This project is based on a Dell mouse which is run by an unknown micro-controller, and SPI ADNS-7550 sensor chip. It made a very easy for me to modify it and drop in MSP430g2553 micro-chip in the same spot, after a handful of easy modifications: trace-cuts, and wire jumpers. A full schematic is missing but the pin assignment should tell whole story:
 
 ```
