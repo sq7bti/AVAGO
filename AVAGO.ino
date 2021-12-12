@@ -26,7 +26,7 @@ mouse pinout DB9:
      QYB QXB QYA QXA
       Y   X  YQ  XQ  MMB     DB9   color   MCU
       U   D   L   R  PotY      1   red     10
-   _______________________     2   blk      0
+   _______________________     2   blk      9
    \  1   2   3   4   5  /     3   gry     11
     \                   /      4   org      8
      \__6___7___8___9_ /       5   brw      5
