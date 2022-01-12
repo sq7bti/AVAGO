@@ -20,28 +20,28 @@
                       CLK   P1_5 |            | P1_6   MISO
    XQ   DB9 4         QXA   P2_0 |            | P2_5   5th button
     X   DB9 2         QXB   P2_1 |            | P2_4   4th button
-    Y   DB9 1         QYB   P2_2 |_10______11_| P2_3   QYA      DB9 3 YQ   
+    Y   DB9 1         QYB   P2_2 |_10______11_| P2_3   QYA      DB9 3 YQ
 
 mouse pinout DB9:
      QYB QXB QYA QXA
-      Y   X  YQ  XQ  MMB     DB9   color   MCU
-      U   D   L   R  PotY      1   red     10
-   _______________________     2   blk      9
-   \  1   2   3   4   5  /     3   gry     11
-    \                   /      4   org      8
-     \__6___7___8___9_ /       5   brw      5
-       LMB  +  gnd RMB         6   grn    LMB
-                   PotX        7   wht  +5vcc
-                               8   blu    GND
-                               9   ylw    RMB
+      Y   X  YQ  XQ  MMB     DB9   color   UTP         MCU
+      U   D   L   R  PotY      1   red     w/grn         10
+   _______________________     2   blk     w/brw          9
+   \  1   2   3   4   5  /     3   gry     w/blu         11
+    \                   /      4   org      org           8
+     \__6___7___8___9_ /       5   brw      brw           5
+       LMB  +  gnd RMB         6   grn      grn         LMB
+                   PotX        7   wht      blu       +5vcc
+                               8   blu     shield       GND
+                               9   ylw     w/org        RMB
 */
 
 //#define DEBUG 1
 
 // 25 lines in VBR interrupt routine corresponds to approx 50us pulse
 // IRQ reacts approx 18..20us after falling edge
-#define USE_FIXED_DELAY 20
-//#define USE_FIXED_DELAY 40
+//#define USE_FIXED_DELAY 20
+#define USE_FIXED_DELAY 50
 
 #define  REG_PRODUCT_ID       0x00
 #define  REG_INV_PRODUCT_ID   0x3E
@@ -77,7 +77,9 @@ mouse pinout DB9:
 
 #define  LASER_RANGE      LASER_10MA
 /* 0x00 -> 33.6%, 0xff -> 100%*/
-#define  LASER_POWER      0xB5
+#define  LASER_POWER      0x48
+//#define  LASER_POWER      0xB2
+//#define  LASER_POWER      0xB5
 //#define  LASER_POWER      0xC2
 
 #define  REG_LASER_CTRL0  0x1a
