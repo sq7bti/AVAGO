@@ -55,10 +55,10 @@ p) jumper MOSI wire between MCU-5 and AVAGO-6
 q) jumper CLK wire between MCU-7 and AVAGO-5
 r) jumper IRQ line between MCU-3 and AVAGO-7
 s) cut trace coming to pin MCU-3 (ROT-A)
-s) cut trace coming to pin MCU-5 (ROT-B)
-t) jumper top button line between MCU-2 and TP-20
-u) cut trace coming to pin MCU-2 (LMB)
-v) jumper JP10 to MCU-13 (5th button)
+t) cut trace coming to pin MCU-5 (ROT-B)
+u) jumper top button line between MCU-2 and TP-20
+v) cut trace coming to pin MCU-2 (LMB)
+w) jumper JP10 to MCU-13 (5th button)
 
 4. Additional modifications and reassembly
 
