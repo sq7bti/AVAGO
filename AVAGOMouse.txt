@@ -1,0 +1,90 @@
+Components:
+- MOCZUL mouse
+- MSP430G2452 (DIP)
+- a few wires
+- 9-core wire with DE-9 female connector (Sega Genesis controller replacement cable)
+- 3.3V LDO or higher
+
+Tools:
+- logic analyzer (for tracing register writes)
+- soldering tools
+- scalpel (or very sharp knife) to cut PCB traces
+- multimeter with continuity monitor
+
+1. Disassembly
+
+Mouse case is held by screws hidden under the slider at the back, and latches under
+buttons. With much thicker than original (USB) cable latches are difficult to mate,
+hence I suggest to keep them latched, and reach for programming pins which case just
+slightly lifted (see mouse_open_2.jpg).
+
+2. Laser calibration coefficients
+
+_Before_ making any modification to the hardware make not of the laser calibration
+coefficients. Each unit comes with individual calibration that is stored in non-volatile
+memory of the original controller. Both values are transmitted during startup through
+SPI pins to the AVAGO chip. See laser_calibration.png for example trace.
+connect to SPI lines: SCLK (5), MOSI (6) and MISO (4), power up your mouse,
+and find writes to registers right at the mouse original MCU initialization phase:
+LASER_CTRL0 (0x1a) and it's complementary LASER_CTRL1 (0x1f),
+LSRPWR_CFG0 (0x1c) and it's complementary LSRPWR_CFG1 (0x1d).
+Note values (e.g. with marker on PCB for future reference) LASER_RANGE and LASER_POWER
+and modify AVAGO.ino with correct values. After that the original MCU can be discarded.
+
+3. Main procedure
+
+a) remove R8 (SMD 3k3)
+b) remove C2
+c) short C2 pad to GND
+d) remove R1 and R2 - SMD next to USB connector (68)
+e) cut traces coming to pins MCU-16 (RESET), MCU-17 (TEST)
+f) pullup 56k from MCU-16 to Vcc
+g) remove resistor/jumper JP2
+h) place LDO in place of JP2:
+  in - 5Vcc coming to AVAGO-9
+  out- 3.3V out coming to MCU-1
+  GND - JP7 - either side
+i) remove JP12
+j) remove JP11
+k) remove JP10/JP9, and put one across to connect 4th button with pin 12 of MCU, solder it
+l) cut ground plane around pin 4 of MCU to isolate
+m) cut trace to pin 7 of MCU
+n) connect isolated plane around pin 4 with trace comming from /CS (pin 3)
+o) jumper MISO wire between MCU-14 and AVAGO-4
+p) jumper MOSI wire between MCU-5 and AVAGO-6
+q) jumper CLK wire between MCU-7 and AVAGO-5
+r) jumper IRQ line between MCU-3 and AVAGO-7
+s) cut trace coming to pin MCU-3 (ROT-A)
+s) cut trace coming to pin MCU-5 (ROT-B)
+t) jumper top button line between MCU-2 and TP-20
+u) cut trace coming to pin MCU-2 (LMB)
+v) jumper JP10 to MCU-13 (5th button)
+
+4. Additional modifications and reassembly
+
+9-core cable needs to be fed through the original frontal opening, after slight
+modification to case. Use color codes in .ino source code file (columns color and MCU)
+as guidance to solder to appropriate points inside the mouse. Thickness (stiffness)
+of 9-core cable might make it difficult to bend it: I suggest to perform small
+incisions in the cable insulation (V-cuts) to make it easier to bend.
+Four LEDs can be used to indicate quadrature signals. Required current limiting resistors are already included.
+
+4. Software
+
+To build and flash AVAGO.ino use Energia IDE.
+MCU can be (re-)programmed with MSP-Launchpad by means of pins RESET (16) and TEST (17).
+Needed connection should be extended, as the programming pins are difficult
+to reach when case is slightly open (see mouse_open_2.jpg for details)
+
+MCU fakes movements in diamond path shape when communication with AVAGO optical sensor chip
+cannot be established on startup. See source code for more details.
+
+When complete, MCU produces additional signals interpreted by Amiga driver as wheels signals.
+Driver (Blabber.driver) needs to be run in background. Additional information is printed in console after stopping with CTRL-C signal.
+Additional functions:
+- scroll wheel
+- side buttons as button 4th and 5th
+- hold top button to change scroll wheel function from up-down to sideways.
+- hold top button to change mouse DPI mode with side buttons
+
+Enjoy your new optical Amiga mouse with wheel support!
