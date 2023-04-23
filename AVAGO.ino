@@ -42,9 +42,9 @@ joy = 9 pin short black cable with black joypad (MMB disfunct)
 
 // 25 lines in VBR interrupt routine corresponds to approx 50us pulse
 // IRQ reacts approx 18..20us after falling edge
-#define USE_FIXED_DELAY 18
+//#define USE_FIXED_DELAY 18
 //#define USE_FIXED_DELAY 20
-//#define USE_FIXED_DELAY 50
+//#define USE_FIXED_DELAY 60
 
 #define  REG_PRODUCT_ID       0x00
 #define  REG_INV_PRODUCT_ID   0x3E
@@ -107,10 +107,11 @@ joy = 9 pin short black cable with black joypad (MMB disfunct)
 #define QRB P2_7
 
 //extra buttons
-#define BUTTON_5TH P2_5
 #define BUTTON_4TH P2_4
-#define TOP_BUTTON P1_0
+//#define BUTTON_5TH P2_5
 
+#define LMB P2_5
+#define RMB P1_0
 #define MMB P1_3
 #define MMB_IN P1_4
 #define WHEEL_DELAY 5000
@@ -308,11 +309,12 @@ void setup() {
   pinMode(QRA, INPUT_PULLUP);
   pinMode(QRB, INPUT_PULLUP);
   pinMode(MMB, INPUT_PULLUP); // set it as output only when we need to pull it down
+  pinMode(RMB, OUTPUT);
+  pinMode(LMB, OUTPUT);
   pinMode(MMB_IN, INPUT_PULLUP);
 
-  pinMode(BUTTON_5TH, INPUT_PULLUP);
+//  pinMode(BUTTON_5TH, INPUT_PULLUP);
   pinMode(BUTTON_4TH, INPUT_PULLUP);
-  pinMode(TOP_BUTTON, INPUT_PULLUP);
 
 //  SW_state = (digitalRead(QRA) << 1) + digitalRead(QRB);
   SW_state = (P2IN >> 6) & 0x03;
@@ -536,8 +538,8 @@ void loop() {
 
   //button_state &= BIT0 | BIT4 | BIT5;
   prev_button_state = button_state;
-  //             top button               4th    5th        MMB
-  button_state = (P1IN & BIT0) | (P2IN & (BIT4 | BIT5)) | ((P1IN & BIT4) >> 3);
+  //                       4th       MMB
+  button_state = (P2IN & (BIT4)) | ((P1IN & BIT4) >> 3);
 
   if(prev_button_state ^ button_state) {
     button_update |= prev_button_state ^ button_state;
@@ -589,38 +591,51 @@ volatile byte quad_raw_out, test;
 
 //P2_0 QXA XQ
 //P2_1 QXB  X
-//P2_2 QYA YQ
-//P2_3 QYB  Y
+//P2_2 QYB  Y
+//P2_3 QYA YQ
 
-// /----- QYB
-// |/---- QYA
+// /----- QYA
+// |/---- QYB
 // ||/--- QXB
 // |||/-- QXA
 // 3210
-// 0011 CODE_5TH_DOWN     (0x03)
-// 0101 CODE_WHEEL_RIGHT  (0x05)
-// 0110 CODE_5TH_UP       (0x06)
+// 0000 CODE_WHEEL_UP     (0x00)
+// 0001 CODE_WHEEL_DOWN   (0x01)
+// 0010 CODE_WHEEL_UP     (0x02)
+// 0011 CODE_WHEEL_DOWN   (0x03)
+// 0100 CODE_WHEEL_UP     (0x04)
+// 0101 CODE_WHEEL_DOWN   (0x05)
+// 0110 CODE_WHEEL_UP     (0x06)
 // 0111 CODE_WHEEL_DOWN   (0x07)
-// 1001 CODE_4TH_UP       (0x09)
+// 1000 CODE_WHEEL_LEFT   (0x08)
+// 1001 CODE_WHEEL_RIGHT  (0x09)
 // 1010 CODE_WHEEL_LEFT   (0x0A)
-// 1011 CODE_WHEEL_UP     (0x0B)
-// 1100 CODE_4TH_DOWN     (0x0C)
-// 1101 CODE_MMB_DOWN     (0x0D)
-// 1110 CODE_MMB_UP       (0x0E)
+// 1011 CODE_WHEEL_RIGHT  (0x0B)
+// 1100 CODE_WHEEL_LEFT   (0x0C)
+// 1101 CODE_WHEEL_RIGHT  (0x0D)
+// 1110 CODE_WHEEL_LEFT   (0x0E)
+// 1111 CODE_WHEEL_RIGHT  (0x0F)
 
 volatile byte code_send;
 
-#define CODE_IDLE         0
-#define CODE_5TH_DOWN     (0x03)
-#define CODE_WHEEL_RIGHT  (0x05)
-#define CODE_5TH_UP       (0x06)
-#define CODE_WHEEL_DOWN   (0x07)
-#define CODE_4TH_UP       (0x09)
+#define CODE_IDLE         (0x05)
+//#define CODE_WHEEL_DOWN   (0x03)
+#define CODE_WHEEL_DOWN   (0x05)
+//#define CODE_WHEEL_UP     (0x00)
+//#define CODE_WHEEL_UP     (0x04)
+#define CODE_WHEEL_UP     (0x04)
+#define CODE_WHEEL_RIGHT  (0x09)
 #define CODE_WHEEL_LEFT   (0x0A)
-#define CODE_WHEEL_UP     (0x0B)
-#define CODE_4TH_DOWN     (0x0C)
-#define CODE_MMB_DOWN     (0x0D)
-#define CODE_MMB_UP       (0x0E)
+
+//#define CODE_5TH_DOWN     (0x03)
+//#define CODE_5TH_UP       (0x06)
+//#define CODE_4TH_UP       (0x09)
+//#define CODE_4TH_DOWN     (0x0C)
+
+//YB  YA  XB  XA   RMB
+// 0   1   0   1     0       WU (jeśli mysz zwróciła w raporcie pozycję scroll'a >0)
+// 0   1   1   0     0       WD (jeśli mysz zwróciła w raporcie pozycję scroll'a <0)
+// 0   1   0   1     1       IDLE (scroll ==0)
 
 void mmb_falling() {
 
@@ -628,75 +643,31 @@ void mmb_falling() {
 
   code_send = CODE_IDLE;
 
-  if((button_update & BIT1) || (mmb_prev_state ^ (P1IN & BIT4))) {
-    if((P1IN & BIT4)) {
-      mmb_prev_state = BIT4 ;//(P1IN & BIT4);
-      code_send = CODE_MMB_UP;
+  if(scroll_change != 0) {
+    P1OUT &= ~BIT0;
+    if(scroll_change < 0) {
+      code_send = CODE_WHEEL_DOWN;
+      ++scroll_change;
     } else {
-      mmb_prev_state = 0; //(P1IN & BIT4);
-      code_send = CODE_MMB_DOWN;
-    }
-    P2OUT = (quad_raw_out ^ code_send);
-  } else {
-    if(button_update & BIT4) {
-      // 4th - left side button
-      if(button_state & BIT4)
-        code_send = CODE_4TH_UP;
-      else
-        code_send = CODE_4TH_DOWN;
-      P2OUT = (quad_raw_out ^ code_send);
-    } else {
-      if(button_update & BIT5) {
-        // 5th button - right side button
-        if(button_state & BIT5)
-          code_send = CODE_5TH_UP;
-        else
-          code_send = CODE_5TH_DOWN;
-        P2OUT = (quad_raw_out ^ code_send); // 0x0100
-      } else {
-        if(scroll_change != 0) {
-          if(scroll_change < 0)
-            code_send = (button_state & BIT0)?CODE_WHEEL_DOWN:CODE_WHEEL_LEFT;
-          else
-            code_send = (button_state & BIT0)?CODE_WHEEL_UP:CODE_WHEEL_RIGHT;
-          P2OUT = (quad_raw_out ^ code_send);
-        }
-      }
+      code_send = CODE_WHEEL_UP;
+      --scroll_change;
     }
   }
-
+  P2OUT = code_send | ((P1IN & BIT4) << 1) | BIT6 | BIT7;
+  
+#ifdef USE_FIXED_DELAY
   // with code confirmation we must not wait for falling edge
   delayMicroseconds(USE_FIXED_DELAY);
+#else
+  delayMicroseconds(1);
+  while(!(P1IN & BIT3));
+#endif // USE_FIXED_DELAY
 
   P2OUT = quad_raw_out;
+  P1OUT |= BIT0; // RMB release
+  P2OUT |= BIT5; // signal MMB with low LMB
 
   ++mmb_trigger;
   mmb_last_trigger = millis();
-
-  // MMB is kept longer to confirm reception
-  // only then we can clear status for each code sent
-  if(!(P1IN & BIT3)) {
-    switch(code_send)  {
-      case CODE_WHEEL_UP:
-      case CODE_WHEEL_RIGHT:
-          --scroll_change;
-          break;
-      case CODE_WHEEL_DOWN:
-      case CODE_WHEEL_LEFT:
-          ++scroll_change;
-          break;
-      case CODE_MMB_DOWN:
-      case CODE_MMB_UP:
-          button_update &= ~BIT1;
-          break;
-      case CODE_4TH_DOWN:
-      case CODE_4TH_UP:
-          button_update &= ~BIT4;
-          break;
-      case CODE_5TH_DOWN:
-      case CODE_5TH_UP:
-          button_update &= ~BIT5;
-          break;
-    }
-  }
+  button_update &= ~BIT1; // MMB
 }
