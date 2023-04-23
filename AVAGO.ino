@@ -24,24 +24,27 @@
 
 mouse pinout DB9:
      QYB QXB QYA QXA
-      Y   X  YQ  XQ  MMB     DB9   color   UTP         MCU
-      U   D   L   R  PotY      1   red     w/grn         10
-   _______________________     2   blk     w/brw          9
-   \  1   2   3   4   5  /     3   gry     w/blu         11
-    \                   /      4   org      org           8
-     \__6___7___8___9_ /       5   brw      brw           5
-       LMB  +  gnd RMB         6   grn      grn         LMB
-                   PotX        7   wht      blu       +5vcc
-                               8   blu     shield       GND
-                               9   ylw     w/org        RMB
+      Y   X  YQ  XQ  MMB     DB9   color   joy      UTP         MCU
+      U   D   L   R  PotY      1   red     ylw      w/grn         10
+   _______________________     2   blk     org      w/brw          9
+   \  1   2   3   4   5  /     3   gry     red      w/blu         11
+    \                   /      4   org     brw       org           8
+     \__6___7___8___9_ /       5   brw     blk       brw           5
+       LMB  +  gnd RMB         6   grn     grn       grn         LMB
+                   PotX        7   wht     blu       blu       +5vcc
+                               8   blu     gry      shield       GND
+                               9   ylw     wht      w/org        RMB
+color = 9 wire black "repair" cable from ebay/alliexpress
+joy = 9 pin short black cable with black joypad (MMB disfunct)
 */
 
 //#define DEBUG 1
 
 // 25 lines in VBR interrupt routine corresponds to approx 50us pulse
 // IRQ reacts approx 18..20us after falling edge
+#define USE_FIXED_DELAY 18
 //#define USE_FIXED_DELAY 20
-#define USE_FIXED_DELAY 50
+//#define USE_FIXED_DELAY 50
 
 #define  REG_PRODUCT_ID       0x00
 #define  REG_INV_PRODUCT_ID   0x3E
@@ -77,9 +80,9 @@ mouse pinout DB9:
 
 #define  LASER_RANGE      LASER_10MA
 /* 0x00 -> 33.6%, 0xff -> 100%*/
-#define  LASER_POWER      0x48
+//#define  LASER_POWER      0x48
 //#define  LASER_POWER      0xB2
-//#define  LASER_POWER      0xB5
+#define  LASER_POWER      0xB5
 //#define  LASER_POWER      0xC2
 
 #define  REG_LASER_CTRL0  0x1a
@@ -124,7 +127,7 @@ mouse pinout DB9:
 #define GPIO_OUT_SET_SUB(port, pin) (P##port##OUT |=  (1<<pin))
 #define GPIO_OUT_CLR_SUB(port, pin) (P##port##OUT &= ~(1<<pin))
 
-#define MHZ 12
+#define MHZ 16
 #define SET_CPU_CLOCK(mhz) { DCOCTL = CALDCO_##mhz##MHZ; BCSCTL1 = CALBC1_##mhz##MHZ; };
 
 const unsigned int quad_state[] = { 0, 1, 3, 2 };
